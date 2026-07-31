@@ -12,6 +12,9 @@ export function createTreatment(data) {
     doctor_notes,
     treatment_fee,
     prescription,
+    tooth_number,
+    diagnosis,
+    treatment_details,
   } = data;
 
   if (!patient_id || !appointment_id) {
@@ -78,6 +81,10 @@ export function createTreatment(data) {
     doctor_notes: doctor_notes?.trim() || "",
     treatment_fee: treatmentFee,
     prescription: prescription?.trim() || "",
+
+    diagnosis: diagnosis?.trim() || "",
+    tooth_number: tooth_number?.trim() || "",
+    treatment_details: treatment_details?.trim() || "",
 
     created_at: now(),
     updated_at: now(),

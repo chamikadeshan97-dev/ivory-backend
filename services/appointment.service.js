@@ -45,6 +45,7 @@ export function createAppointment(data) {
     id: newId,
     patient_id: data.patient_id,
     dentist_id: data.dentist_id,
+    appointment_number: data.appointment_number,
     appointment_date: data.appointment_date,
     appointment_time: data.appointment_time,
     reason_for_visit: data.reason_for_visit || "",
@@ -400,6 +401,7 @@ export function getAppointments(date) {
 
       appointment_date: appointment.appointment_date,
       appointment_time: appointment.appointment_time,
+      appointment_number: appointment.appointment_number,
       checked_in_time: appointment.checked_in_time || "",
       reason_for_visit: appointment.reason_for_visit || "",
       status: appointment.status || "",
@@ -513,6 +515,7 @@ export function getAppointmentById(id) {
 
     appointment_date: appointment.appointment_date,
     appointment_time: appointment.appointment_time,
+    appointment_number: appointment.appointment_number,
     reason_for_visit: appointment.reason_for_visit || "",
     status: appointment.status || "",
 

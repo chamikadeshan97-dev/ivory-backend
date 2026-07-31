@@ -7,7 +7,7 @@ import treatmentRoutes from "./treatment.routes.js";
 import paymentRoutes from "./payment.routes.js";
 import reportRoutes from "./report.routes.js";
 import authRoutes from "./auth.routes.js";
-
+import commonTreatmentRouter from "./commonTreatments.routes.js";
 import dailyQueueRoutes from "./dailyQueue.routes.js";
 const router = express.Router();
 
@@ -26,4 +26,5 @@ router.use("/payments", paymentRoutes);
 router.use("/reports", reportRoutes);
 router.use("/daily-queue", dailyQueueRoutes);
 router.use("/auth", authRoutes);
+router.use("/common-treatments",commonTreatmentRouter)
 export default router;

@@ -10,4 +10,9 @@ router.get(
   reportController.getDailyNextAppointments,
 );
 router.get("/income-range", reportController.getIncomeByDateRange);
+
+router.get(
+  "/appointments-treatments-range",
+  reportController.getAppointmentsTreatmentsRange,
+);
 export default router;

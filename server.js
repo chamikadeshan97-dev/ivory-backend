@@ -12,6 +12,7 @@ const app = express();
 app.use(
   cors({
     origin: [
+      "http://10.94.50.179:5173",
       "http://localhost:5173",
       "https://eloquent-panda-85075a.netlify.app",
       "https://sparkling-macaron-1a1c80.netlify.app",

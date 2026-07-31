@@ -29,8 +29,6 @@ function getDailyIncome(req, res) {
 
 function getDailyNextAppointments(req, res) {
   try {
-
-    
     const report = reportService.getDailyNextAppointments(req.query.date);
 
     res.json({
@@ -122,9 +120,35 @@ export function getIncomeByDateRange(req, res) {
   }
 }
 
+export async function getAppointmentsTreatmentsRange(req, res) {
+  try {
+    const { start_date: startDate, end_date: endDate } = req.query;
+
+    const result = await reportService.getAppointmentsTreatmentsByDateRange(
+      startDate,
+      endDate,
+    );
+
+    
+
+    return res.status(200).json({
+      success: true,
+      ...result,
+    });
+  } catch (error) {
+    console.error("Date range report error:", error);
+
+    return res.status(error.statusCode || 500).json({
+      success: false,
+      message:
+        error.message || "Failed to retrieve appointments and treatments",
+    });
+  }
+}
 export default {
   getDailyAppointments,
   getDailyIncome,
   getIncomeByDateRange,
   getDailyNextAppointments,
+  getAppointmentsTreatmentsRange,
 };

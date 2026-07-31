@@ -62,7 +62,6 @@ export function getDailyIncome(date) {
           String(item.id).trim() === String(payment.treatment_id).trim(),
       );
 
-      
       const treatmentFee = Number(treatment?.treatment_fee || 0);
 
       const paidAmount = Number(payment.payment_amount || 0);
@@ -365,5 +364,272 @@ export function getDailyNextAppointments(date) {
     date,
     total_next_appointments: dailyNextAppointments.length,
     data: dailyNextAppointments,
+  };
+}
+
+/* --------------------------------------------------------
+   Helpers
+-------------------------------------------------------- */
+
+const normalizeDate = (value) => {
+  if (!value) {
+    return null;
+  }
+
+  const stringValue = String(value).trim();
+
+  // Already in YYYY-MM-DD format
+  if (/^\d{4}-\d{2}-\d{2}$/.test(stringValue)) {
+    return stringValue;
+  }
+
+  const date = new Date(stringValue);
+
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return date.toISOString().split("T")[0];
+};
+
+const isDateWithinRange = (dateValue, startDate, endDate) => {
+  const normalizedDate = normalizeDate(dateValue);
+
+  if (!normalizedDate) {
+    return false;
+  }
+
+  return normalizedDate >= startDate && normalizedDate <= endDate;
+};
+
+const convertToNumber = (value) => {
+  if (value === null || value === undefined || value === "") {
+    return 0;
+  }
+
+  const cleanedValue = String(value).replace(/[^0-9.-]/g, "");
+
+  const numberValue = Number(cleanedValue);
+
+  return Number.isFinite(numberValue) ? numberValue : 0;
+};
+
+/* --------------------------------------------------------
+   Get appointments, treatments and payments by date range
+-------------------------------------------------------- */
+
+export async function getAppointmentsTreatmentsByDateRange(
+  startDateParam,
+  endDateParam,
+) {
+  if (!startDateParam || !endDateParam) {
+    const error = new Error("start_date and end_date are required");
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const startDate = normalizeDate(startDateParam);
+  const endDate = normalizeDate(endDateParam);
+
+  if (!startDate || !endDate) {
+    const error = new Error("Invalid date format. Use YYYY-MM-DD.");
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (startDate > endDate) {
+    const error = new Error("start_date cannot be after end_date");
+
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const appointmentsData = readSheet("Appointments");
+  const treatmentsData = readSheet("Treatments");
+  const paymentsData = readSheet("Payments");
+
+  const appointments = Array.isArray(appointmentsData) ? appointmentsData : [];
+
+  const treatments = Array.isArray(treatmentsData) ? treatmentsData : [];
+
+  const payments = Array.isArray(paymentsData) ? paymentsData : [];
+
+  /* ------------------------------------------------------
+     Find appointments within selected date range
+  ------------------------------------------------------ */
+
+  const filteredAppointments = appointments.filter((appointment) =>
+    isDateWithinRange(appointment.appointment_date, startDate, endDate),
+  );
+
+  const appointmentIds = new Set(
+    filteredAppointments.map((appointment) =>
+      String(appointment.id || "").trim(),
+    ),
+  );
+
+  /* ------------------------------------------------------
+     Find treatments connected to appointments
+  ------------------------------------------------------ */
+
+  const relatedTreatments = treatments.filter((treatment) =>
+    appointmentIds.has(String(treatment.appointment_id || "").trim()),
+  );
+
+  const treatmentIds = new Set(
+    relatedTreatments.map((treatment) => String(treatment.id || "").trim()),
+  );
+
+  /* ------------------------------------------------------
+     Find payments connected to treatments
+  ------------------------------------------------------ */
+
+  const relatedPayments = payments.filter((payment) =>
+    treatmentIds.has(String(payment.treatment_id || "").trim()),
+  );
+
+  /* ------------------------------------------------------
+     Group payments by treatment ID
+  ------------------------------------------------------ */
+
+  const paymentsByTreatmentId = new Map();
+
+  relatedPayments.forEach((payment) => {
+    const treatmentId = String(payment.treatment_id || "").trim();
+
+    if (!paymentsByTreatmentId.has(treatmentId)) {
+      paymentsByTreatmentId.set(treatmentId, []);
+    }
+
+    paymentsByTreatmentId.get(treatmentId).push(payment);
+  });
+
+  /* ------------------------------------------------------
+     Group treatments by appointment ID
+  ------------------------------------------------------ */
+
+  const treatmentsByAppointmentId = new Map();
+
+  relatedTreatments.forEach((treatment) => {
+    const appointmentId = String(treatment.appointment_id || "").trim();
+
+    const treatmentId = String(treatment.id || "").trim();
+
+    const treatmentPayments = paymentsByTreatmentId.get(treatmentId) || [];
+
+    const treatmentCharge = convertToNumber(treatment.treatment_fee);
+
+    const totalPaid = treatmentPayments.reduce(
+      (total, payment) => total + convertToNumber(payment.payment_amount),
+      0,
+    );
+
+    const remainingAmount = Math.max(treatmentCharge - totalPaid, 0);
+
+    const treatmentWithPayments = {
+      ...treatment,
+
+      payment_summary: {
+        treatment_charge: treatmentCharge,
+        total_paid: totalPaid,
+        remaining_amount: remainingAmount,
+        installment_count: treatmentPayments.length,
+        status:
+          treatmentCharge > 0 && remainingAmount <= 0
+            ? "Paid"
+            : totalPaid > 0
+              ? "Partial"
+              : "Unpaid",
+      },
+
+      payments: treatmentPayments,
+    };
+
+    if (!treatmentsByAppointmentId.has(appointmentId)) {
+      treatmentsByAppointmentId.set(appointmentId, []);
+    }
+
+    treatmentsByAppointmentId.get(appointmentId).push(treatmentWithPayments);
+  });
+
+  /* ------------------------------------------------------
+     Build final appointment data
+  ------------------------------------------------------ */
+
+  const results = filteredAppointments.map((appointment) => {
+    const appointmentId = String(appointment.id || "").trim();
+
+    const appointmentTreatments =
+      treatmentsByAppointmentId.get(appointmentId) || [];
+
+    const appointmentTreatmentCharge = appointmentTreatments.reduce(
+      (total, treatment) => total + convertToNumber(treatment.treatment_fee),
+      0,
+    );
+
+    const appointmentTotalPaid = appointmentTreatments.reduce(
+      (total, treatment) =>
+        total + convertToNumber(treatment.payment_summary?.total_paid),
+      0,
+    );
+
+    const appointmentRemaining = Math.max(
+      appointmentTreatmentCharge - appointmentTotalPaid,
+      0,
+    );
+
+    return {
+      ...appointment,
+
+      treatments: appointmentTreatments,
+
+      financial_summary: {
+        treatment_charge: appointmentTreatmentCharge,
+        total_paid: appointmentTotalPaid,
+        remaining_amount: appointmentRemaining,
+        status:
+          appointmentTreatmentCharge > 0 && appointmentRemaining <= 0
+            ? "Paid"
+            : appointmentTotalPaid > 0
+              ? "Partial"
+              : "Unpaid",
+      },
+    };
+  });
+
+  /* ------------------------------------------------------
+     Calculate report summary
+  ------------------------------------------------------ */
+
+  const totalTreatmentCharge = relatedTreatments.reduce(
+    (total, treatment) => total + convertToNumber(treatment.treatment_fee),
+    0,
+  );
+
+  const totalPaid = relatedPayments.reduce(
+    (total, payment) => total + convertToNumber(payment.payment_amount),
+    0,
+  );
+
+  const totalRemaining = Math.max(totalTreatmentCharge - totalPaid, 0);
+
+  return {
+    date_range: {
+      start_date: startDate,
+      end_date: endDate,
+    },
+
+    summary: {
+      appointment_count: filteredAppointments.length,
+      treatment_count: relatedTreatments.length,
+      payment_count: relatedPayments.length,
+      total_treatment_charge: totalTreatmentCharge,
+      total_paid: totalPaid,
+      total_remaining: totalRemaining,
+    },
+
+    data: results,
   };
 }
