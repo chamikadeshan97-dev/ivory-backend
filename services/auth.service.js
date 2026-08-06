@@ -45,7 +45,7 @@ const findUserById = async (userId) => {
 const validateUserStatus = (user) => {
   const status = normalizeText(user?.status);
 
-  if (status) {
+  if (!status) {
     const error = new Error("This user account is inactive.");
 
     error.statusCode = 403;
@@ -73,7 +73,7 @@ export const loginUser = async ({ username, password }) => {
     throw error;
   }
 
-  validateUserStatus(user);
+//  validateUserStatus(user);
 
   const passwordHash = user.password_hash || user.password;
 

@@ -9,6 +9,14 @@ const __dirname = path.dirname(__filename);
 const DATA_DIR = path.join(__dirname, "..", "data");
 const DB_FILE = path.join(DATA_DIR, "dental_clinic_database.xlsx");
 
+export const EXCEL_FILE_PATH =
+  process.env.EXCEL_FILE_PATH ||
+  path.resolve(
+    process.cwd(),
+    "data",
+    "dental_clinic_database.xlsx",
+  );
+
 const SHEETS = {
   Users: [
     "id",

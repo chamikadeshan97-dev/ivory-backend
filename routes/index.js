@@ -12,6 +12,7 @@ import dailyQueueRoutes from "./dailyQueue.routes.js";
 import drugRoutes from "./drug.routes.js";
 import inWaitingRoutes from "./inWaiting.routes.js";
 import locationRoutes from "./locations.routes.js";
+import databaseRoutes from "./database.routes.js";
 
 const router = express.Router();
 
@@ -34,4 +35,5 @@ router.use("/common-treatments",commonTreatmentRouter)
 router.use("/drugs", drugRoutes);
 router.use("/locations", locationRoutes);
 router.use("/in-waiting", inWaitingRoutes);
+router.use("/database", databaseRoutes);
 export default router;
