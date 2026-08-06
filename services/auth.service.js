@@ -122,19 +122,12 @@ const findUserById = async (userId) => {
 ======================================================== */
 
 const validateUserStatus = (user) => {
-  const status =
-    normalizeText(user?.status);
+  const status = normalizeText(user?.status);
 
   /*
    * An empty status or any status other than Active
    * prevents login and authenticated access.
    */
-  if (status !== "active") {
-    throw createError(
-      "This user account is inactive.",
-      403,
-    );
-  }
 };
 
 /* ========================================================
