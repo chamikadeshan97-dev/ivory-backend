@@ -45,7 +45,7 @@ const findUserById = async (userId) => {
 const validateUserStatus = (user) => {
   const status = normalizeText(user?.status);
 
-  if (status !== "active") {
+  if (status) {
     const error = new Error("This user account is inactive.");
 
     error.statusCode = 403;
