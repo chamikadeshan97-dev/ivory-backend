@@ -1,7 +1,7 @@
 import {
   readSheet,
   writeSheet,
-} from "../utils/excelDb.js";
+} from "../utils/googleSheets.js";
 
 import {
   createId,
@@ -29,10 +29,14 @@ function normalizeTreatmentNameForComparison(value) {
 }
 
 function validateTreatmentName(value) {
-  const treatmentName = normalizeTreatmentName(value);
+  const treatmentName =
+    normalizeTreatmentName(value);
 
   if (!treatmentName) {
-    throw appError("Treatment name is required", 400);
+    throw appError(
+      "Treatment name is required",
+      400,
+    );
   }
 
   if (treatmentName.length > 150) {
@@ -51,7 +55,10 @@ function validateFee(value) {
     value === null ||
     value === ""
   ) {
-    throw appError("Treatment fee is required", 400);
+    throw appError(
+      "Treatment fee is required",
+      400,
+    );
   }
 
   const fee = Number(value);
@@ -75,36 +82,72 @@ function validateFee(value) {
 
 function normalizeTreatment(record) {
   return {
-    id: normalizeText(record.id),
-    treatment_name: normalizeTreatmentName(
-      record.treatment_name,
-    ),
-    fee: Number(record.fee || 0),
-    created_at: normalizeText(record.created_at),
-    updated_at: normalizeText(record.updated_at),
+    id: normalizeText(record?.id),
+
+    treatment_name:
+      normalizeTreatmentName(
+        record?.treatment_name,
+      ),
+
+    fee: Number(record?.fee || 0),
+
+    created_at:
+      normalizeText(record?.created_at),
+
+    updated_at:
+      normalizeText(record?.updated_at),
   };
 }
 
-function getAllTreatmentRows() {
-  const rows = readSheet(SHEET_NAME);
+function sortTreatmentsByName(treatments) {
+  return [...treatments].sort(
+    (first, second) =>
+      first.treatment_name.localeCompare(
+        second.treatment_name,
+        undefined,
+        {
+          sensitivity: "base",
+        },
+      ),
+  );
+}
+
+/*
+ * Google Sheets operations are asynchronous,
+ * so this helper must also be asynchronous.
+ */
+async function getAllTreatmentRows() {
+  const rows = await readSheet(SHEET_NAME);
 
   if (!Array.isArray(rows)) {
     return [];
   }
 
   return rows
-    .filter((row) => row && typeof row === "object")
+    .filter(
+      (row) =>
+        row &&
+        typeof row === "object",
+    )
     .map(normalizeTreatment)
-    .filter((treatment) => treatment.id);
+    .filter(
+      (treatment) =>
+        Boolean(treatment.id),
+    );
 }
 
-function findTreatmentIndexById(treatments, id) {
-  const normalizedId = normalizeText(id).toLowerCase();
+function findTreatmentIndexById(
+  treatments,
+  id,
+) {
+  const normalizedId =
+    normalizeText(id).toLowerCase();
 
   return treatments.findIndex(
     (treatment) =>
-      normalizeText(treatment.id).toLowerCase() ===
-      normalizedId,
+      normalizeText(
+        treatment.id,
+      ).toLowerCase() === normalizedId,
   );
 }
 
@@ -114,40 +157,62 @@ function findDuplicateTreatment(
   ignoredId = null,
 ) {
   const normalizedName =
-    normalizeTreatmentNameForComparison(treatmentName);
+    normalizeTreatmentNameForComparison(
+      treatmentName,
+    );
 
-  return treatments.find((treatment) => {
-    const hasSameName =
-      normalizeTreatmentNameForComparison(
-        treatment.treatment_name,
-      ) === normalizedName;
+  const normalizedIgnoredId =
+    ignoredId
+      ? normalizeText(
+          ignoredId,
+        ).toLowerCase()
+      : null;
 
-    const isIgnoredTreatment =
-      ignoredId &&
-      normalizeText(treatment.id).toLowerCase() ===
-        normalizeText(ignoredId).toLowerCase();
+  return treatments.find(
+    (treatment) => {
+      const hasSameName =
+        normalizeTreatmentNameForComparison(
+          treatment.treatment_name,
+        ) === normalizedName;
 
-    return hasSameName && !isIgnoredTreatment;
-  });
+      const isIgnoredTreatment =
+        normalizedIgnoredId &&
+        normalizeText(
+          treatment.id,
+        ).toLowerCase() ===
+          normalizedIgnoredId;
+
+      return (
+        hasSameName &&
+        !isIgnoredTreatment
+      );
+    },
+  );
 }
 
 /* --------------------------------------------------------
    Create
 -------------------------------------------------------- */
 
-export function createCommonTreatment(data) {
-  const treatments = getAllTreatmentRows();
+export async function createCommonTreatment(
+  data,
+) {
+  const treatments =
+    await getAllTreatmentRows();
 
-  const treatmentName = validateTreatmentName(
-    data?.treatment_name,
-  );
+  const treatmentName =
+    validateTreatmentName(
+      data?.treatment_name,
+    );
 
-  const fee = validateFee(data?.fee);
+  const fee =
+    validateFee(data?.fee);
 
-  const duplicateTreatment = findDuplicateTreatment(
-    treatments,
-    treatmentName,
-  );
+  const duplicateTreatment =
+    findDuplicateTreatment(
+      treatments,
+      treatmentName,
+    );
 
   if (duplicateTreatment) {
     throw appError(
@@ -160,15 +225,25 @@ export function createCommonTreatment(data) {
 
   const newTreatment = {
     id: createId("CT"),
-    treatment_name: treatmentName,
+
+    treatment_name:
+      treatmentName,
+
     fee,
-    created_at: timestamp,
-    updated_at: timestamp,
+
+    created_at:
+      timestamp,
+
+    updated_at:
+      timestamp,
   };
 
   treatments.push(newTreatment);
 
-  writeSheet(SHEET_NAME, treatments);
+  await writeSheet(
+    SHEET_NAME,
+    treatments,
+  );
 
   return newTreatment;
 }
@@ -177,17 +252,12 @@ export function createCommonTreatment(data) {
    Read all
 -------------------------------------------------------- */
 
-export function getAllCommonTreatments() {
-  const treatments = getAllTreatmentRows();
+export async function getAllCommonTreatments() {
+  const treatments =
+    await getAllTreatmentRows();
 
-  return treatments.sort((first, second) =>
-    first.treatment_name.localeCompare(
-      second.treatment_name,
-      undefined,
-      {
-        sensitivity: "base",
-      },
-    ),
+  return sortTreatmentsByName(
+    treatments,
   );
 }
 
@@ -195,76 +265,92 @@ export function getAllCommonTreatments() {
    Search
 -------------------------------------------------------- */
 
-export function searchCommonTreatments(q) {
-  const treatments = getAllTreatmentRows();
+export async function searchCommonTreatments(
+  q,
+) {
+  const treatments =
+    await getAllTreatmentRows();
 
-  const searchValue = normalizeText(q).toLowerCase();
+  const searchValue =
+    normalizeText(q).toLowerCase();
 
   if (!searchValue) {
-    return treatments.sort((first, second) =>
-      first.treatment_name.localeCompare(
-        second.treatment_name,
-        undefined,
-        {
-          sensitivity: "base",
-        },
-      ),
+    return sortTreatmentsByName(
+      treatments,
     );
   }
 
-  return treatments
-    .filter((treatment) => {
-      const treatmentId = normalizeText(
-        treatment.id,
-      ).toLowerCase();
+  const filteredTreatments =
+    treatments.filter(
+      (treatment) => {
+        const treatmentId =
+          normalizeText(
+            treatment.id,
+          ).toLowerCase();
 
-      const treatmentName = normalizeText(
-        treatment.treatment_name,
-      ).toLowerCase();
+        const treatmentName =
+          normalizeText(
+            treatment.treatment_name,
+          ).toLowerCase();
 
-      const treatmentFee = String(
-        treatment.fee,
-      ).toLowerCase();
+        const treatmentFee =
+          String(
+            treatment.fee,
+          ).toLowerCase();
 
-      return (
-        treatmentId.includes(searchValue) ||
-        treatmentName.includes(searchValue) ||
-        treatmentFee.includes(searchValue)
-      );
-    })
-    .sort((first, second) =>
-      first.treatment_name.localeCompare(
-        second.treatment_name,
-        undefined,
-        {
-          sensitivity: "base",
-        },
-      ),
+        return (
+          treatmentId.includes(
+            searchValue,
+          ) ||
+          treatmentName.includes(
+            searchValue,
+          ) ||
+          treatmentFee.includes(
+            searchValue,
+          )
+        );
+      },
     );
+
+  return sortTreatmentsByName(
+    filteredTreatments,
+  );
 }
 
 /* --------------------------------------------------------
    Read by ID
 -------------------------------------------------------- */
 
-export function getCommonTreatmentById(id) {
-  if (!normalizeText(id)) {
+export async function getCommonTreatmentById(
+  id,
+) {
+  const normalizedId =
+    normalizeText(id);
+
+  if (!normalizedId) {
     throw appError(
       "Common treatment ID is required",
       400,
     );
   }
 
-  const treatments = getAllTreatmentRows();
+  const treatments =
+    await getAllTreatmentRows();
 
-  const treatment = treatments.find(
-    (item) =>
-      normalizeText(item.id).toLowerCase() ===
-      normalizeText(id).toLowerCase(),
-  );
+  const treatment =
+    treatments.find(
+      (item) =>
+        normalizeText(
+          item.id,
+        ).toLowerCase() ===
+        normalizedId.toLowerCase(),
+    );
 
   if (!treatment) {
-    throw appError("Common treatment not found", 404);
+    throw appError(
+      "Common treatment not found",
+      404,
+    );
   }
 
   return treatment;
@@ -274,29 +360,44 @@ export function getCommonTreatmentById(id) {
    Update
 -------------------------------------------------------- */
 
-export function updateCommonTreatment(id, data) {
-  if (!normalizeText(id)) {
+export async function updateCommonTreatment(
+  id,
+  data,
+) {
+  const normalizedId =
+    normalizeText(id);
+
+  if (!normalizedId) {
     throw appError(
       "Common treatment ID is required",
       400,
     );
   }
 
-  const treatments = getAllTreatmentRows();
+  const treatments =
+    await getAllTreatmentRows();
 
-  const treatmentIndex = findTreatmentIndexById(
-    treatments,
-    id,
-  );
+  const treatmentIndex =
+    findTreatmentIndexById(
+      treatments,
+      normalizedId,
+    );
 
   if (treatmentIndex === -1) {
-    throw appError("Common treatment not found", 404);
+    throw appError(
+      "Common treatment not found",
+      404,
+    );
   }
 
-  const existingTreatment = treatments[treatmentIndex];
+  const existingTreatment =
+    treatments[treatmentIndex];
 
-  let treatmentName = existingTreatment.treatment_name;
-  let fee = existingTreatment.fee;
+  let treatmentName =
+    existingTreatment.treatment_name;
+
+  let fee =
+    existingTreatment.fee;
 
   if (
     Object.prototype.hasOwnProperty.call(
@@ -304,9 +405,10 @@ export function updateCommonTreatment(id, data) {
       "treatment_name",
     )
   ) {
-    treatmentName = validateTreatmentName(
-      data.treatment_name,
-    );
+    treatmentName =
+      validateTreatmentName(
+        data.treatment_name,
+      );
   }
 
   if (
@@ -315,14 +417,16 @@ export function updateCommonTreatment(id, data) {
       "fee",
     )
   ) {
-    fee = validateFee(data.fee);
+    fee =
+      validateFee(data.fee);
   }
 
-  const duplicateTreatment = findDuplicateTreatment(
-    treatments,
-    treatmentName,
-    existingTreatment.id,
-  );
+  const duplicateTreatment =
+    findDuplicateTreatment(
+      treatments,
+      treatmentName,
+      existingTreatment.id,
+    );
 
   if (duplicateTreatment) {
     throw appError(
@@ -333,14 +437,23 @@ export function updateCommonTreatment(id, data) {
 
   const updatedTreatment = {
     ...existingTreatment,
-    treatment_name: treatmentName,
+
+    treatment_name:
+      treatmentName,
+
     fee,
-    updated_at: now(),
+
+    updated_at:
+      now(),
   };
 
-  treatments[treatmentIndex] = updatedTreatment;
+  treatments[treatmentIndex] =
+    updatedTreatment;
 
-  writeSheet(SHEET_NAME, treatments);
+  await writeSheet(
+    SHEET_NAME,
+    treatments,
+  );
 
   return updatedTreatment;
 }
@@ -349,30 +462,47 @@ export function updateCommonTreatment(id, data) {
    Delete
 -------------------------------------------------------- */
 
-export function deleteCommonTreatment(id) {
-  if (!normalizeText(id)) {
+export async function deleteCommonTreatment(
+  id,
+) {
+  const normalizedId =
+    normalizeText(id);
+
+  if (!normalizedId) {
     throw appError(
       "Common treatment ID is required",
       400,
     );
   }
 
-  const treatments = getAllTreatmentRows();
+  const treatments =
+    await getAllTreatmentRows();
 
-  const treatmentIndex = findTreatmentIndexById(
-    treatments,
-    id,
-  );
+  const treatmentIndex =
+    findTreatmentIndexById(
+      treatments,
+      normalizedId,
+    );
 
   if (treatmentIndex === -1) {
-    throw appError("Common treatment not found", 404);
+    throw appError(
+      "Common treatment not found",
+      404,
+    );
   }
 
-  const deletedTreatment = treatments[treatmentIndex];
+  const deletedTreatment =
+    treatments[treatmentIndex];
 
-  treatments.splice(treatmentIndex, 1);
+  treatments.splice(
+    treatmentIndex,
+    1,
+  );
 
-  writeSheet(SHEET_NAME, treatments);
+  await writeSheet(
+    SHEET_NAME,
+    treatments,
+  );
 
   return deletedTreatment;
 }
@@ -381,17 +511,26 @@ export function deleteCommonTreatment(id) {
    Statistics
 -------------------------------------------------------- */
 
-export function getCommonTreatmentStatistics() {
-  const treatments = getAllTreatmentRows();
+export async function getCommonTreatmentStatistics() {
+  const treatments =
+    await getAllTreatmentRows();
 
   const fees = treatments
-    .map((treatment) => Number(treatment.fee))
-    .filter((fee) => Number.isFinite(fee));
+    .map(
+      (treatment) =>
+        Number(treatment.fee),
+    )
+    .filter(
+      (fee) =>
+        Number.isFinite(fee),
+    );
 
-  const totalFeeValue = fees.reduce(
-    (total, fee) => total + fee,
-    0,
-  );
+  const totalFeeValue =
+    fees.reduce(
+      (total, fee) =>
+        total + fee,
+      0,
+    );
 
   const averageFee =
     fees.length > 0
@@ -410,41 +549,78 @@ export function getCommonTreatmentStatistics() {
 
   const lowestFeeTreatment =
     treatments.length > 0
-      ? treatments.reduce((lowest, treatment) => {
-          if (
-            Number(treatment.fee) <
-            Number(lowest.fee)
-          ) {
-            return treatment;
-          }
+      ? treatments.reduce(
+          (
+            lowest,
+            treatment,
+          ) => {
+            if (
+              Number(
+                treatment.fee,
+              ) <
+              Number(
+                lowest.fee,
+              )
+            ) {
+              return treatment;
+            }
 
-          return lowest;
-        })
+            return lowest;
+          },
+        )
       : null;
 
   const highestFeeTreatment =
     treatments.length > 0
-      ? treatments.reduce((highest, treatment) => {
-          if (
-            Number(treatment.fee) >
-            Number(highest.fee)
-          ) {
-            return treatment;
-          }
+      ? treatments.reduce(
+          (
+            highest,
+            treatment,
+          ) => {
+            if (
+              Number(
+                treatment.fee,
+              ) >
+              Number(
+                highest.fee,
+              )
+            ) {
+              return treatment;
+            }
 
-          return highest;
-        })
+            return highest;
+          },
+        )
       : null;
 
   return {
-    total_treatments: treatments.length,
-    total_fee_value: Number(
-      totalFeeValue.toFixed(2),
-    ),
-    average_fee: Number(averageFee.toFixed(2)),
-    lowest_fee: Number(lowestFee.toFixed(2)),
-    highest_fee: Number(highestFee.toFixed(2)),
-    lowest_fee_treatment: lowestFeeTreatment,
-    highest_fee_treatment: highestFeeTreatment,
+    total_treatments:
+      treatments.length,
+
+    total_fee_value:
+      Number(
+        totalFeeValue.toFixed(2),
+      ),
+
+    average_fee:
+      Number(
+        averageFee.toFixed(2),
+      ),
+
+    lowest_fee:
+      Number(
+        lowestFee.toFixed(2),
+      ),
+
+    highest_fee:
+      Number(
+        highestFee.toFixed(2),
+      ),
+
+    lowest_fee_treatment:
+      lowestFeeTreatment,
+
+    highest_fee_treatment:
+      highestFeeTreatment,
   };
 }

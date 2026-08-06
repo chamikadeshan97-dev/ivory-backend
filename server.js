@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-
+import "dotenv/config";
 import apiRoutes from "./routes/index.js";
 import { ensureDatabase } from "./utils/excelDb.js";
 

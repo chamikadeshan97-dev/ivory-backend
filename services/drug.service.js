@@ -1,7 +1,7 @@
 import {
   readSheet,
   writeSheet,
-} from "../utils/excelDb.js";
+} from "../utils/googleSheets.js";
 
 import appError from "../utils/appError.js";
 
@@ -58,13 +58,16 @@ function generateDrugId(drugs) {
 }
 
 function findDrugIndexById(drugs, id) {
-  const normalizedId = normalizeText(id).toLowerCase();
+  const normalizedId = normalizeText(
+    id,
+  ).toLowerCase();
 
-  return drugs.findIndex(
-    (drug) =>
+  return drugs.findIndex((drug) => {
+    return (
       normalizeText(drug.id).toLowerCase() ===
-      normalizedId,
-  );
+      normalizedId
+    );
+  });
 }
 
 function checkDrugNameExists(
@@ -75,16 +78,16 @@ function checkDrugNameExists(
   const normalizedName =
     normalizeDrugName(name).toLowerCase();
 
+  const normalizedExcludedId =
+    normalizeText(excludedId).toLowerCase();
+
   return drugs.some((drug) => {
     const currentDrugId =
       normalizeText(drug.id).toLowerCase();
 
-    const excludedDrugId =
-      normalizeText(excludedId).toLowerCase();
-
     if (
-      excludedId &&
-      currentDrugId === excludedDrugId
+      normalizedExcludedId &&
+      currentDrugId === normalizedExcludedId
     ) {
       return false;
     }
@@ -102,10 +105,10 @@ function checkDrugNameExists(
 |--------------------------------------------------------------------------
 */
 
-export function createDrug(data) {
-  const drugs = readSheet(DRUGS_SHEET).map(
-    normalizeDrug,
-  );
+export async function createDrug(data) {
+  const drugRows = await readSheet(DRUGS_SHEET);
+
+  const drugs = drugRows.map(normalizeDrug);
 
   const name = normalizeDrugName(data?.name);
 
@@ -127,7 +130,7 @@ export function createDrug(data) {
 
   drugs.push(drug);
 
-  writeSheet(DRUGS_SHEET, drugs);
+  await writeSheet(DRUGS_SHEET, drugs);
 
   return drug;
 }
@@ -138,10 +141,10 @@ export function createDrug(data) {
 |--------------------------------------------------------------------------
 */
 
-export function createDrugsBulk(data) {
-  const drugs = readSheet(DRUGS_SHEET).map(
-    normalizeDrug,
-  );
+export async function createDrugsBulk(data) {
+  const drugRows = await readSheet(DRUGS_SHEET);
+
+  const drugs = drugRows.map(normalizeDrug);
 
   const drugItems = data?.drugs;
 
@@ -210,7 +213,7 @@ export function createDrugsBulk(data) {
   });
 
   if (created.length > 0) {
-    writeSheet(DRUGS_SHEET, [
+    await writeSheet(DRUGS_SHEET, [
       ...drugs,
       ...created,
     ]);
@@ -230,8 +233,10 @@ export function createDrugsBulk(data) {
 |--------------------------------------------------------------------------
 */
 
-export function getDrugs(query = {}) {
-  let drugs = readSheet(DRUGS_SHEET)
+export async function getDrugs(query = {}) {
+  const drugRows = await readSheet(DRUGS_SHEET);
+
+  let drugs = drugRows
     .map(normalizeDrug)
     .filter((drug) => drug.id && drug.name);
 
@@ -276,7 +281,7 @@ export function getDrugs(query = {}) {
 |--------------------------------------------------------------------------
 */
 
-export function searchDrugs(searchQuery) {
+export async function searchDrugs(searchQuery) {
   const query = normalizeText(
     searchQuery,
   ).toLowerCase();
@@ -288,7 +293,9 @@ export function searchDrugs(searchQuery) {
     );
   }
 
-  const drugs = readSheet(DRUGS_SHEET)
+  const drugRows = await readSheet(DRUGS_SHEET);
+
+  const drugs = drugRows
     .map(normalizeDrug)
     .filter((drug) => {
       return (
@@ -297,15 +304,15 @@ export function searchDrugs(searchQuery) {
       );
     });
 
-  drugs.sort((firstDrug, secondDrug) =>
-    firstDrug.name.localeCompare(
+  drugs.sort((firstDrug, secondDrug) => {
+    return firstDrug.name.localeCompare(
       secondDrug.name,
       undefined,
       {
         sensitivity: "base",
       },
-    ),
-  );
+    );
+  });
 
   return drugs;
 }
@@ -316,10 +323,10 @@ export function searchDrugs(searchQuery) {
 |--------------------------------------------------------------------------
 */
 
-export function getDrugById(id) {
-  const drugs = readSheet(DRUGS_SHEET).map(
-    normalizeDrug,
-  );
+export async function getDrugById(id) {
+  const drugRows = await readSheet(DRUGS_SHEET);
+
+  const drugs = drugRows.map(normalizeDrug);
 
   const drugIndex = findDrugIndexById(
     drugs,
@@ -339,10 +346,10 @@ export function getDrugById(id) {
 |--------------------------------------------------------------------------
 */
 
-export function updateDrug(id, data) {
-  const drugs = readSheet(DRUGS_SHEET).map(
-    normalizeDrug,
-  );
+export async function updateDrug(id, data) {
+  const drugRows = await readSheet(DRUGS_SHEET);
+
+  const drugs = drugRows.map(normalizeDrug);
 
   const drugIndex = findDrugIndexById(
     drugs,
@@ -379,7 +386,7 @@ export function updateDrug(id, data) {
 
   drugs[drugIndex] = updatedDrug;
 
-  writeSheet(DRUGS_SHEET, drugs);
+  await writeSheet(DRUGS_SHEET, drugs);
 
   return updatedDrug;
 }
@@ -390,10 +397,10 @@ export function updateDrug(id, data) {
 |--------------------------------------------------------------------------
 */
 
-export function deleteDrug(id) {
-  const drugs = readSheet(DRUGS_SHEET).map(
-    normalizeDrug,
-  );
+export async function deleteDrug(id) {
+  const drugRows = await readSheet(DRUGS_SHEET);
+
+  const drugs = drugRows.map(normalizeDrug);
 
   const drugIndex = findDrugIndexById(
     drugs,
@@ -409,7 +416,7 @@ export function deleteDrug(id) {
     1,
   );
 
-  writeSheet(DRUGS_SHEET, drugs);
+  await writeSheet(DRUGS_SHEET, drugs);
 
   return deletedDrug;
 }

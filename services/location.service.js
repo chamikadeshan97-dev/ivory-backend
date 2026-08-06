@@ -1,12 +1,19 @@
 import {
   readSheet,
   writeSheet,
-} from "../utils/excelDb.js";
+} from "../utils/googleSheets.js";
 
 const SHEET_NAME = "Locations";
 
-const normalizeText = (value) =>
-  String(value ?? "").trim();
+/*
+|--------------------------------------------------------------------------
+| Helpers
+|--------------------------------------------------------------------------
+*/
+
+const normalizeText = (value) => {
+  return String(value ?? "").trim();
+};
 
 const normalizeDistance = (value) => {
   const distance = Number(value);
@@ -21,7 +28,9 @@ const normalizeDistance = (value) => {
   return distance;
 };
 
-const generateLocationId = (locations = []) => {
+const generateLocationId = (
+  locations = [],
+) => {
   const largestNumber = locations.reduce(
     (largest, location) => {
       const match = String(
@@ -45,53 +54,85 @@ const generateLocationId = (locations = []) => {
   ).padStart(4, "0")}`;
 };
 
-const formatLocation = (location) => ({
-  id: normalizeText(location?.id),
-  location: normalizeText(
-    location?.location,
-  ),
-  distance_km:
-    Number(location?.distance_km) || 0,
-});
+const formatLocation = (location) => {
+  return {
+    id: normalizeText(location?.id),
+    location: normalizeText(
+      location?.location,
+    ),
+    distance_km:
+      Number(location?.distance_km) || 0,
+  };
+};
 
-/* ========================================================
-   Get all locations
-======================================================== */
+/*
+|--------------------------------------------------------------------------
+| Get All Locations
+|--------------------------------------------------------------------------
+*/
 
 export const getAllLocationsService =
   async () => {
+    const locationRows =
+      await readSheet(SHEET_NAME);
+
     const locations =
-      (await readSheet(SHEET_NAME)) || [];
+      Array.isArray(locationRows)
+        ? locationRows
+        : [];
 
     return locations
       .map(formatLocation)
+      .filter(
+        (location) =>
+          location.id &&
+          location.location,
+      )
       .sort(
         (firstLocation, secondLocation) =>
           firstLocation.distance_km -
             secondLocation.distance_km ||
           firstLocation.location.localeCompare(
             secondLocation.location,
+            undefined,
+            {
+              sensitivity: "base",
+            },
           ),
       );
   };
 
-/* ========================================================
-   Get location by ID
-======================================================== */
+/*
+|--------------------------------------------------------------------------
+| Get Location by ID
+|--------------------------------------------------------------------------
+*/
 
 export const getLocationByIdService =
   async (id) => {
-    const locationId = normalizeText(id);
+    const locationId =
+      normalizeText(id).toLowerCase();
+
+    if (!locationId) {
+      return null;
+    }
+
+    const locationRows =
+      await readSheet(SHEET_NAME);
 
     const locations =
-      (await readSheet(SHEET_NAME)) || [];
+      Array.isArray(locationRows)
+        ? locationRows
+        : [];
 
     const location = locations.find(
-      (item) =>
-        normalizeText(
-          item.id,
-        ).toLowerCase() ===
-        locationId.toLowerCase(),
+      (item) => {
+        return (
+          normalizeText(
+            item?.id,
+          ).toLowerCase() === locationId
+        );
+      },
     );
 
     return location
@@ -99,20 +140,21 @@ export const getLocationByIdService =
       : null;
   };
 
-/* ========================================================
-   Create location
-======================================================== */
+/*
+|--------------------------------------------------------------------------
+| Create Location
+|--------------------------------------------------------------------------
+*/
 
 export const createLocationService =
-  async ({
-    location,
-    distance_km,
-  }) => {
+  async (data = {}) => {
     const locationName =
-      normalizeText(location);
+      normalizeText(data.location);
 
     const distanceKm =
-      normalizeDistance(distance_km);
+      normalizeDistance(
+        data.distance_km,
+      );
 
     if (!locationName) {
       const error = new Error(
@@ -134,17 +176,26 @@ export const createLocationService =
       throw error;
     }
 
+    const locationRows =
+      await readSheet(SHEET_NAME);
+
     const locations =
-      (await readSheet(SHEET_NAME)) || [];
+      Array.isArray(locationRows)
+        ? locationRows.map(formatLocation)
+        : [];
+
+    const normalizedLocationName =
+      locationName.toLowerCase();
 
     const locationAlreadyExists =
-      locations.some(
-        (item) =>
+      locations.some((item) => {
+        return (
           normalizeText(
             item.location,
           ).toLowerCase() ===
-          locationName.toLowerCase(),
-      );
+          normalizedLocationName
+        );
+      });
 
     if (locationAlreadyExists) {
       const error = new Error(
@@ -172,25 +223,37 @@ export const createLocationService =
     return newLocation;
   };
 
-/* ========================================================
-   Update location
-======================================================== */
+/*
+|--------------------------------------------------------------------------
+| Update Location
+|--------------------------------------------------------------------------
+*/
 
 export const updateLocationService =
   async (
     id,
-    {
-      location,
-      distance_km,
-    },
+    data = {},
   ) => {
-    const locationId = normalizeText(id);
+    const locationId =
+      normalizeText(id).toLowerCase();
 
     const locationName =
-      normalizeText(location);
+      normalizeText(data.location);
 
     const distanceKm =
-      normalizeDistance(distance_km);
+      normalizeDistance(
+        data.distance_km,
+      );
+
+    if (!locationId) {
+      const error = new Error(
+        "Location ID is required.",
+      );
+
+      error.statusCode = 400;
+
+      throw error;
+    }
 
     if (!locationName) {
       const error = new Error(
@@ -212,17 +275,22 @@ export const updateLocationService =
       throw error;
     }
 
+    const locationRows =
+      await readSheet(SHEET_NAME);
+
     const locations =
-      (await readSheet(SHEET_NAME)) || [];
+      Array.isArray(locationRows)
+        ? locationRows.map(formatLocation)
+        : [];
 
     const locationIndex =
-      locations.findIndex(
-        (item) =>
+      locations.findIndex((item) => {
+        return (
           normalizeText(
             item.id,
-          ).toLowerCase() ===
-          locationId.toLowerCase(),
-      );
+          ).toLowerCase() === locationId
+        );
+      });
 
     if (locationIndex === -1) {
       const error = new Error(
@@ -234,14 +302,23 @@ export const updateLocationService =
       throw error;
     }
 
+    const normalizedLocationName =
+      locationName.toLowerCase();
+
     const duplicateLocation =
       locations.some(
-        (item, index) =>
-          index !== locationIndex &&
-          normalizeText(
-            item.location,
-          ).toLowerCase() ===
-            locationName.toLowerCase(),
+        (item, index) => {
+          if (index === locationIndex) {
+            return false;
+          }
+
+          return (
+            normalizeText(
+              item.location,
+            ).toLowerCase() ===
+            normalizedLocationName
+          );
+        },
       );
 
     if (duplicateLocation) {
@@ -273,25 +350,43 @@ export const updateLocationService =
     return updatedLocation;
   };
 
-/* ========================================================
-   Delete location
-======================================================== */
+/*
+|--------------------------------------------------------------------------
+| Delete Location
+|--------------------------------------------------------------------------
+*/
 
 export const deleteLocationService =
   async (id) => {
-    const locationId = normalizeText(id);
+    const locationId =
+      normalizeText(id).toLowerCase();
+
+    if (!locationId) {
+      const error = new Error(
+        "Location ID is required.",
+      );
+
+      error.statusCode = 400;
+
+      throw error;
+    }
+
+    const locationRows =
+      await readSheet(SHEET_NAME);
 
     const locations =
-      (await readSheet(SHEET_NAME)) || [];
+      Array.isArray(locationRows)
+        ? locationRows.map(formatLocation)
+        : [];
 
     const locationIndex =
-      locations.findIndex(
-        (item) =>
+      locations.findIndex((item) => {
+        return (
           normalizeText(
             item.id,
-          ).toLowerCase() ===
-          locationId.toLowerCase(),
-      );
+          ).toLowerCase() === locationId
+        );
+      });
 
     if (locationIndex === -1) {
       const error = new Error(
@@ -304,7 +399,10 @@ export const deleteLocationService =
     }
 
     const [deletedLocation] =
-      locations.splice(locationIndex, 1);
+      locations.splice(
+        locationIndex,
+        1,
+      );
 
     await writeSheet(
       SHEET_NAME,

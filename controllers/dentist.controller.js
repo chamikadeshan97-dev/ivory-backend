@@ -1,98 +1,177 @@
 import * as dentistService from "../services/dentist.service.js";
 import sendError from "../utils/sendError.js";
 
-function createDentist(req, res) {
-  try {
-    const dentist = dentistService.createDentist(req.body);
+/* --------------------------------------------------------
+   Create dentist
+-------------------------------------------------------- */
 
-    res.status(201).json({
+async function createDentist(req, res) {
+  try {
+    const dentist =
+      await dentistService.createDentist(
+        req.body,
+      );
+
+    return res.status(201).json({
       success: true,
       message: "Dentist added successfully",
       data: dentist,
     });
   } catch (error) {
-    sendError(res, error, "Failed to add dentist");
+    return sendError(
+      res,
+      error,
+      "Failed to add dentist",
+    );
   }
 }
 
-function getAllDentists(req, res) {
-  try {
-    const dentists = dentistService.getAllDentists();
+/* --------------------------------------------------------
+   Get all dentists
+-------------------------------------------------------- */
 
-    res.json({
+async function getAllDentists(req, res) {
+  try {
+    const dentists =
+      await dentistService.getAllDentists();
+
+    return res.status(200).json({
       success: true,
       data: dentists,
     });
   } catch (error) {
-    sendError(res, error, "Failed to fetch dentists");
+    return sendError(
+      res,
+      error,
+      "Failed to fetch dentists",
+    );
   }
 }
 
-function searchDentists(req, res) {
-  try {
-    const dentists = dentistService.searchDentists(req.query.q);
+/* --------------------------------------------------------
+   Search dentists
+-------------------------------------------------------- */
 
-    res.json({
+async function searchDentists(req, res) {
+  try {
+    const dentists =
+      await dentistService.searchDentists(
+        req.query.q,
+      );
+
+    return res.status(200).json({
       success: true,
       data: dentists,
     });
   } catch (error) {
-    sendError(res, error, "Dentist search failed");
+    return sendError(
+      res,
+      error,
+      "Dentist search failed",
+    );
   }
 }
 
-function getDentistById(req, res) {
-  try {
-    const dentist = dentistService.getDentistById(req.params.id);
+/* --------------------------------------------------------
+   Get dentist by ID
+-------------------------------------------------------- */
 
-    res.json({
+async function getDentistById(req, res) {
+  try {
+    const dentist =
+      await dentistService.getDentistById(
+        req.params.id,
+      );
+
+    return res.status(200).json({
       success: true,
       data: dentist,
     });
   } catch (error) {
-    sendError(res, error, "Failed to fetch dentist");
+    return sendError(
+      res,
+      error,
+      "Failed to fetch dentist",
+    );
   }
 }
 
-function updateDentist(req, res) {
-  try {
-    const dentist = dentistService.updateDentist(req.params.id, req.body);
+/* --------------------------------------------------------
+   Update dentist
+-------------------------------------------------------- */
 
-    res.json({
+async function updateDentist(req, res) {
+  try {
+    const dentist =
+      await dentistService.updateDentist(
+        req.params.id,
+        req.body,
+      );
+
+    return res.status(200).json({
       success: true,
       message: "Dentist updated successfully",
       data: dentist,
     });
   } catch (error) {
-    sendError(res, error, "Failed to update dentist");
+    return sendError(
+      res,
+      error,
+      "Failed to update dentist",
+    );
   }
 }
 
-function deleteDentist(req, res) {
-  try {
-    dentistService.deleteDentist(req.params.id);
+/* --------------------------------------------------------
+   Delete dentist
+-------------------------------------------------------- */
 
-    res.json({
+async function deleteDentist(req, res) {
+  try {
+    const deletedDentist =
+      await dentistService.deleteDentist(
+        req.params.id,
+      );
+
+    return res.status(200).json({
       success: true,
       message: "Dentist deleted successfully",
+      data: deletedDentist,
     });
   } catch (error) {
-    sendError(res, error, "Failed to delete dentist");
+    return sendError(
+      res,
+      error,
+      "Failed to delete dentist",
+    );
   }
 }
 
-function getDentistStatistics(req, res) {
-  try {
-    const statistics = dentistService.getDentistStatistics();
+/* --------------------------------------------------------
+   Dentist statistics
+-------------------------------------------------------- */
 
-    res.json({
+async function getDentistStatistics(req, res) {
+  try {
+    const statistics =
+      await dentistService.getDentistStatistics();
+
+    return res.status(200).json({
       success: true,
       data: statistics,
     });
   } catch (error) {
-    sendError(res, error, "Failed to fetch dentist statistics");
+    return sendError(
+      res,
+      error,
+      "Failed to fetch dentist statistics",
+    );
   }
 }
+
+/* --------------------------------------------------------
+   Default export
+-------------------------------------------------------- */
 
 export default {
   createDentist,

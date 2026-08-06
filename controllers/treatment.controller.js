@@ -1,49 +1,89 @@
 import * as treatmentService from "../services/treatment.service.js";
 import sendError from "../utils/sendError.js";
 
-function createTreatment(req, res) {
-  try {
-    const treatment = treatmentService.createTreatment(req.body);
+/* --------------------------------------------------------
+   Create treatment
+-------------------------------------------------------- */
 
-    res.status(201).json({
+async function createTreatment(req, res) {
+  try {
+    const treatment =
+      await treatmentService.createTreatment(req.body);
+
+    return res.status(201).json({
       success: true,
       message: "Treatment recorded successfully",
       data: treatment,
     });
   } catch (error) {
-    sendError(res, error, "Failed to record treatment");
+    return sendError(
+      res,
+      error,
+      "Failed to record treatment",
+    );
   }
 }
 
-function getTreatments(req, res) {
-  try {
-    const treatments = treatmentService.getTreatments(req.query.patient_id);
+/* --------------------------------------------------------
+   Get treatments
+-------------------------------------------------------- */
 
-    res.json({
+async function getTreatments(req, res) {
+  try {
+    const treatments =
+      await treatmentService.getTreatments(
+        req.query.patient_id,
+      );
+
+    return res.status(200).json({
       success: true,
       data: treatments,
     });
   } catch (error) {
-    sendError(res, error, "Failed to fetch treatments");
+    return sendError(
+      res,
+      error,
+      "Failed to fetch treatments",
+    );
   }
 }
-function getPaymentsByTreatmentIdController(req, res, next) {
+
+/* --------------------------------------------------------
+   Get treatment payment summary
+-------------------------------------------------------- */
+
+async function getPaymentsByTreatmentIdController(
+  req,
+  res,
+) {
   try {
     const { treatmentId } = req.params;
 
-    const result = treatmentService.getTreatmentPaymentSummary(treatmentId);
+    const result =
+      await treatmentService.getTreatmentPaymentSummary(
+        treatmentId,
+      );
 
     return res.status(200).json({
       success: true,
-      message: "Treatment payment history retrieved successfully",
+      message:
+        "Treatment payment history retrieved successfully",
       data: result,
     });
   } catch (error) {
-    next(error);
+    return sendError(
+      res,
+      error,
+      "Failed to retrieve treatment payment history",
+    );
   }
 }
 
-function getFollowUpPatients  (req, res)  {
+/* --------------------------------------------------------
+   Get follow-up patients
+-------------------------------------------------------- */
+
+async function getFollowUpPatients(req, res) {
   try {
     const { date } = req.query;
 
@@ -69,7 +109,7 @@ function getFollowUpPatients  (req, res)  {
     }
 
     const result =
-       treatmentService.getFollowUpPatientsByDate(
+      await treatmentService.getFollowUpPatientsByDate(
         date,
       );
 
@@ -85,16 +125,17 @@ function getFollowUpPatients  (req, res)  {
       error,
     );
 
-    return res.status(500).json({
-      success: false,
-      message:
-        "Unable to retrieve follow-up patients.",
-      error: error.message,
-    });
+    return sendError(
+      res,
+      error,
+      "Unable to retrieve follow-up patients",
+    );
   }
-};
+}
 
 export default {
-  createTreatment,getFollowUpPatients,
-  getTreatments,getPaymentsByTreatmentIdController
+  createTreatment,
+  getTreatments,
+  getPaymentsByTreatmentIdController,
+  getFollowUpPatients,
 };

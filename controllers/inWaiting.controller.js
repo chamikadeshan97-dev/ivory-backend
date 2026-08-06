@@ -8,151 +8,268 @@ import {
 
 /*
 |--------------------------------------------------------------------------
-| Get all waiting records
+| Controller Error Handler
 |--------------------------------------------------------------------------
 */
 
-export const getAllWaitingRecords = async (req, res) => {
-  try {
-    const records = await getAllInWaitingRecords();
+const handleControllerError = (
+  error,
+  res,
+  fallbackMessage,
+  statusCode = 500,
+) => {
+  console.error(
+    fallbackMessage,
+    error,
+  );
 
-    return res.status(200).json({
-      success: true,
-      count: records.length,
-      data: records,
-    });
-  } catch (error) {
-    console.error("Get all waiting records error:", error);
-
-    return res.status(500).json({
+  return res
+    .status(
+      error.statusCode ||
+        statusCode,
+    )
+    .json({
       success: false,
-      message: error.message || "Failed to load waiting records.",
+      message:
+        error.message ||
+        fallbackMessage,
     });
-  }
 };
 
 /*
 |--------------------------------------------------------------------------
-| Get currently active waiting records
+| Get All Waiting Records
 |--------------------------------------------------------------------------
+|
+| GET /api/in-waiting
+|
 */
 
-export const getActiveWaitingRecords = async (req, res) => {
-  try {
-    const records = await getActiveInWaitingRecords();
+export const getAllWaitingRecords =
+  async (req, res) => {
+    try {
+      const records =
+        await getAllInWaitingRecords();
 
-    return res.status(200).json({
-      success: true,
-      count: records.length,
-      data: records,
-    });
-  } catch (error) {
-    console.error("Get active waiting records error:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: error.message || "Failed to load active waiting records.",
-    });
-  }
-};
-
-/*
-|--------------------------------------------------------------------------
-| Get waiting record by appointment ID
-|--------------------------------------------------------------------------
-*/
-
-export const getWaitingByAppointmentId = async (req, res) => {
-  try {
-    const { appointmentId } = req.params;
-
-    const record = await getInWaitingByAppointmentId(appointmentId);
-
-    if (!record) {
-      return res.status(404).json({
-        success: false,
-        message: "Waiting record not found for this appointment.",
+      return res.status(200).json({
+        success: true,
+        count: records.length,
+        data: records,
       });
+    } catch (error) {
+      return handleControllerError(
+        error,
+        res,
+        "Failed to load waiting records.",
+      );
     }
-
-    return res.status(200).json({
-      success: true,
-      data: record,
-    });
-  } catch (error) {
-    console.error("Get waiting record error:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: error.message || "Failed to load waiting record.",
-    });
-  }
-};
+  };
 
 /*
 |--------------------------------------------------------------------------
-| Start waiting
+| Get Active Waiting Records
 |--------------------------------------------------------------------------
+|
+| GET /api/in-waiting/active
+|
 */
 
-export const startWaiting = async (req, res) => {
-  try {
-    const { appointmentId } = req.params;
+export const getActiveWaitingRecords =
+  async (req, res) => {
+    try {
+      const records =
+        await getActiveInWaitingRecords();
 
-    const record = await startAppointmentWaiting(appointmentId);
-
-    return res.status(201).json({
-      success: true,
-      message: "Patient moved to waiting.",
-      data: record,
-    });
-  } catch (error) {
-    console.error("Start waiting error:", error);
-
-    const statusCode =
-      error.code === "APPOINTMENT_NOT_FOUND"
-        ? 404
-        : error.code === "ALREADY_WAITING"
-          ? 409
-          : 500;
-
-    return res.status(statusCode).json({
-      success: false,
-      message: error.message || "Failed to start waiting.",
-    });
-  }
-};
+      return res.status(200).json({
+        success: true,
+        count: records.length,
+        data: records,
+      });
+    } catch (error) {
+      return handleControllerError(
+        error,
+        res,
+        "Failed to load active waiting records.",
+      );
+    }
+  };
 
 /*
 |--------------------------------------------------------------------------
-| End waiting
+| Get Waiting Record by Appointment ID
 |--------------------------------------------------------------------------
+|
+| GET /api/in-waiting/appointment/:appointmentId
+|
 */
 
-export const endWaiting = async (req, res) => {
-  try {
-    const { appointmentId } = req.params;
+export const getWaitingByAppointmentId =
+  async (req, res) => {
+    try {
+      const appointmentId =
+        String(
+          req.params.appointmentId ||
+            "",
+        ).trim();
 
-    const record = await endAppointmentWaiting(appointmentId);
+      if (!appointmentId) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Appointment ID is required.",
+        });
+      }
 
-    return res.status(200).json({
-      success: true,
-      message: "Patient waiting period completed.",
-      data: record,
-    });
-  } catch (error) {
-    console.error("End waiting error:", error);
+      const record =
+        await getInWaitingByAppointmentId(
+          appointmentId,
+        );
 
-    const statusCode =
-      error.code === "WAITING_NOT_FOUND"
-        ? 404
-        : error.code === "WAITING_ALREADY_COMPLETED"
-          ? 409
-          : 500;
+      if (!record) {
+        return res.status(404).json({
+          success: false,
+          message:
+            "Waiting record not found for this appointment.",
+        });
+      }
 
-    return res.status(statusCode).json({
-      success: false,
-      message: error.message || "Failed to end waiting.",
-    });
-  }
-};
+      return res.status(200).json({
+        success: true,
+        data: record,
+      });
+    } catch (error) {
+      return handleControllerError(
+        error,
+        res,
+        "Failed to load waiting record.",
+      );
+    }
+  };
+
+/*
+|--------------------------------------------------------------------------
+| Start Waiting
+|--------------------------------------------------------------------------
+|
+| POST /api/in-waiting/:appointmentId
+|
+*/
+
+export const startWaiting =
+  async (req, res) => {
+    try {
+      const appointmentId =
+        String(
+          req.params.appointmentId ||
+            "",
+        ).trim();
+
+      if (!appointmentId) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Appointment ID is required.",
+        });
+      }
+
+      const record =
+        await startAppointmentWaiting(
+          appointmentId,
+        );
+
+      return res.status(201).json({
+        success: true,
+        message:
+          "Patient moved to waiting.",
+        data: record,
+      });
+    } catch (error) {
+      console.error(
+        "Start waiting error:",
+        error,
+      );
+
+      const statusCode =
+        error.statusCode ||
+        (error.code ===
+        "APPOINTMENT_NOT_FOUND"
+          ? 404
+          : error.code ===
+              "ALREADY_WAITING"
+            ? 409
+            : 500);
+
+      return res
+        .status(statusCode)
+        .json({
+          success: false,
+          message:
+            error.message ||
+            "Failed to start waiting.",
+        });
+    }
+  };
+
+/*
+|--------------------------------------------------------------------------
+| End Waiting
+|--------------------------------------------------------------------------
+|
+| PATCH /api/in-waiting/:appointmentId/end
+|
+*/
+
+export const endWaiting =
+  async (req, res) => {
+    try {
+      const appointmentId =
+        String(
+          req.params.appointmentId ||
+            "",
+        ).trim();
+
+      if (!appointmentId) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Appointment ID is required.",
+        });
+      }
+
+      const record =
+        await endAppointmentWaiting(
+          appointmentId,
+        );
+
+      return res.status(200).json({
+        success: true,
+        message:
+          "Patient waiting period completed.",
+        data: record,
+      });
+    } catch (error) {
+      console.error(
+        "End waiting error:",
+        error,
+      );
+
+      const statusCode =
+        error.statusCode ||
+        (error.code ===
+        "WAITING_NOT_FOUND"
+          ? 404
+          : error.code ===
+              "WAITING_ALREADY_COMPLETED"
+            ? 409
+            : 500);
+
+      return res
+        .status(statusCode)
+        .json({
+          success: false,
+          message:
+            error.message ||
+            "Failed to end waiting.",
+        });
+    }
+  };

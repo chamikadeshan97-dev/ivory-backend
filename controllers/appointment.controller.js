@@ -1,92 +1,164 @@
 import * as appointmentService from "../services/appointment.service.js";
 import sendError from "../utils/sendError.js";
 
-function createAppointment(req, res) {
-  try {
-    const appointment = appointmentService.createAppointment(req.body);
+/* --------------------------------------------------------
+   Create appointment
+-------------------------------------------------------- */
 
-    res.status(201).json({
+async function createAppointment(req, res) {
+  try {
+    const appointment =
+      await appointmentService.createAppointment(req.body);
+
+    return res.status(201).json({
       success: true,
       message: "Appointment booked successfully",
       data: appointment,
     });
   } catch (error) {
-    sendError(res, error, "Failed to book appointment");
+    return sendError(
+      res,
+      error,
+      "Failed to book appointment",
+    );
   }
 }
 
-function getAppointments(req, res) {
-  try {
-    const appointments = appointmentService.getAppointments(req.query.date);
+/* --------------------------------------------------------
+   Get appointments
+-------------------------------------------------------- */
 
-    res.json({
+async function getAppointments(req, res) {
+  try {
+    const appointments =
+      await appointmentService.getAppointments(
+        req.query.date,
+      );
+
+    return res.status(200).json({
       success: true,
       data: appointments,
     });
   } catch (error) {
-    sendError(res, error, "Failed to fetch appointments");
+    return sendError(
+      res,
+      error,
+      "Failed to fetch appointments",
+    );
   }
 }
 
-function getAppointmentById(req, res) {
-  try {
-    const appointment = appointmentService.getAppointmentById(req.params.id);
+/* --------------------------------------------------------
+   Get appointment by ID
+-------------------------------------------------------- */
 
-    res.json({
+async function getAppointmentById(req, res) {
+  try {
+    const appointment =
+      await appointmentService.getAppointmentById(
+        req.params.id,
+      );
+
+    return res.status(200).json({
       success: true,
       data: appointment,
     });
   } catch (error) {
-    sendError(res, error, "Failed to fetch appointment");
+    return sendError(
+      res,
+      error,
+      "Failed to fetch appointment",
+    );
   }
 }
 
-export const updateAppointmentStatusController = (req, res, next) => {
+/* --------------------------------------------------------
+   Update appointment status
+-------------------------------------------------------- */
+
+async function updateAppointmentStatusController(
+  req,
+  res,
+  next,
+) {
   try {
     const { id } = req.params;
     const { status } = req.body;
 
-    const updatedAppointment = appointmentService.updateAppointmentStatus(
-      id,
-      status,
-    );
+    const updatedAppointment =
+      await appointmentService.updateAppointmentStatus(
+        id,
+        status,
+      );
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      message: "Appointment status updated successfully",
+      message:
+        "Appointment status updated successfully",
       data: updatedAppointment,
     });
   } catch (error) {
-    next(error);
+    return next(error);
   }
-};
+}
 
-function updateAppointment(req, res) {
+/* --------------------------------------------------------
+   Update appointment
+-------------------------------------------------------- */
+
+async function updateAppointment(req, res) {
   try {
     const { id } = req.params;
 
-    const appointment = appointmentService.updateAppointment(id, req.body);
+    const appointment =
+      await appointmentService.updateAppointment(
+        id,
+        req.body,
+      );
 
-    res.json({
+    return res.status(200).json({
       success: true,
       message: "Appointment updated successfully",
       data: appointment,
     });
   } catch (error) {
-    sendError(res, error, "Failed to update appointment");
+    return sendError(
+      res,
+      error,
+      "Failed to update appointment",
+    );
   }
 }
 
-const isValidDate = (value) => {
-  const dateValue = String(value || "").trim();
+/* --------------------------------------------------------
+   Date validation helpers
+-------------------------------------------------------- */
 
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateValue)) {
+const isValidDate = (value) => {
+  const dateValue = String(
+    value || "",
+  ).trim();
+
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(
+      dateValue,
+    )
+  ) {
     return false;
   }
 
-  const [year, month, day] = dateValue.split("-").map(Number);
+  const [year, month, day] =
+    dateValue
+      .split("-")
+      .map(Number);
 
-  const date = new Date(Date.UTC(year, month - 1, day));
+  const date = new Date(
+    Date.UTC(
+      year,
+      month - 1,
+      day,
+    ),
+  );
 
   return (
     date.getUTCFullYear() === year &&
@@ -96,25 +168,35 @@ const isValidDate = (value) => {
 };
 
 const getDateRange = (req) => {
-  const startDate = String(req.query.start_date || "").trim();
+  const startDate = String(
+    req.query.start_date || "",
+  ).trim();
 
-  const endDate = String(req.query.end_date || "").trim();
+  const endDate = String(
+    req.query.end_date || "",
+  ).trim();
 
   if (!startDate || !endDate) {
     return {
-      error: "start_date and end_date are required",
+      error:
+        "start_date and end_date are required",
     };
   }
 
-  if (!isValidDate(startDate) || !isValidDate(endDate)) {
+  if (
+    !isValidDate(startDate) ||
+    !isValidDate(endDate)
+  ) {
     return {
-      error: "Dates must use YYYY-MM-DD format",
+      error:
+        "Dates must use YYYY-MM-DD format",
     };
   }
 
   if (startDate > endDate) {
     return {
-      error: "start_date cannot be after end_date",
+      error:
+        "start_date cannot be after end_date",
     };
   }
 
@@ -124,9 +206,20 @@ const getDateRange = (req) => {
   };
 };
 
-const getAppointmentsByDateRange = async (req, res) => {
+/* --------------------------------------------------------
+   Get appointments by date range
+-------------------------------------------------------- */
+
+async function getAppointmentsByDateRange(
+  req,
+  res,
+) {
   try {
-    const { startDate, endDate, error } = getDateRange(req);
+    const {
+      startDate,
+      endDate,
+      error,
+    } = getDateRange(req);
 
     if (error) {
       return res.status(400).json({
@@ -135,61 +228,92 @@ const getAppointmentsByDateRange = async (req, res) => {
       });
     }
 
-    const appointments = await appointmentService.getAppointmentsByDateRange(
-      startDate,
-      endDate,
-    );
+    const appointments =
+      await appointmentService
+        .getAppointmentsByDateRange(
+          startDate,
+          endDate,
+        );
 
     return res.status(200).json({
       success: true,
       data: appointments,
       total: appointments.length,
+
       date_range: {
         start_date: startDate,
         end_date: endDate,
       },
     });
   } catch (error) {
-    console.error("Get appointment range error:", error);
+    console.error(
+      "Get appointment range error:",
+      error,
+    );
 
-    return res.status(500).json({
-      success: false,
-      message: "Failed to get appointments for the date range",
-    });
+    return sendError(
+      res,
+      error,
+      "Failed to get appointments for the date range",
+    );
   }
-};
-// controllers/appointmentController.js
+}
 
-const getAppointmentFullDetails = async (req, res) => {
+/* --------------------------------------------------------
+   Get full appointment details
+-------------------------------------------------------- */
+
+async function getAppointmentFullDetails(
+  req,
+  res,
+) {
   try {
-    const { appointmentId } = req.params;
+    const { appointmentId } =
+      req.params;
 
     const data =
-      await appointmentService.getAppointmentFullDetailsService(appointmentId);
+      await appointmentService
+        .getAppointmentFullDetailsService(
+          appointmentId,
+        );
 
     return res.status(200).json({
       success: true,
-      message: "Appointment details retrieved successfully",
+      message:
+        "Appointment details retrieved successfully",
       data,
     });
   } catch (error) {
-    console.error("Get appointment full details error:", error);
+    console.error(
+      "Get appointment full details error:",
+      error,
+    );
 
-    return res.status(error.statusCode || 500).json({
-      success: false,
-      message: error.message || "Failed to retrieve appointment details",
-    });
+    return sendError(
+      res,
+      error,
+      "Failed to retrieve appointment details",
+    );
   }
-};
+}
 
-const getAppointmentByTreatmentId = async (req, res) => {
+/* --------------------------------------------------------
+   Get appointment by treatment ID
+-------------------------------------------------------- */
+
+async function getAppointmentByTreatmentId(
+  req,
+  res,
+) {
   try {
-    const { treatmentId } = req.params;
-    console.log(treatmentId);
+    const { treatmentId } =
+      req.params;
 
-    const result = await appointmentService.getAppointmentByTreatmentId({
-      treatmentId,
-    });
+    const result =
+      await appointmentService
+        .getAppointmentByTreatmentId({
+          treatmentId,
+        });
 
     if (result.type === "single") {
       return res.status(200).json({
@@ -204,13 +328,21 @@ const getAppointmentByTreatmentId = async (req, res) => {
       total: result.total,
     });
   } catch (error) {
-    console.error("Get appointments error:", error);
+    console.error(
+      "Get appointment by treatment error:",
+      error,
+    );
 
-    return res.status(error.statusCode || 500).json({
-      success: false,
-      message: error.message || "Failed to retrieve appointments",
-    });
+    return sendError(
+      res,
+      error,
+      "Failed to retrieve appointment",
+    );
   }
+}
+
+export {
+  updateAppointmentStatusController,
 };
 
 export default {

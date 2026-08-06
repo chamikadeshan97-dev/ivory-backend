@@ -6,12 +6,11 @@ import sendError from "../utils/sendError.js";
    Create
 -------------------------------------------------------- */
 
-function createCommonTreatment(req, res) {
+async function createCommonTreatment(req, res) {
   try {
-    const treatment =
-      commonTreatmentService.createCommonTreatment(
-        req.body,
-      );
+    const treatment = await commonTreatmentService.createCommonTreatment(
+      req.body,
+    );
 
     return res.status(201).json({
       success: true,
@@ -19,7 +18,7 @@ function createCommonTreatment(req, res) {
       data: treatment,
     });
   } catch (error) {
-    return sendError(res, error);
+    return sendError(res, error, "Failed to create common treatment");
   }
 }
 
@@ -27,20 +26,18 @@ function createCommonTreatment(req, res) {
    Read all
 -------------------------------------------------------- */
 
-function getAllCommonTreatments(req, res) {
+async function getAllCommonTreatments(req, res) {
   try {
-    const treatments =
-      commonTreatmentService.getAllCommonTreatments();
+    const treatments = await commonTreatmentService.getAllCommonTreatments();
 
     return res.status(200).json({
       success: true,
-      message:
-        "Common treatments retrieved successfully",
+      message: "Common treatments retrieved successfully",
       count: treatments.length,
       data: treatments,
     });
   } catch (error) {
-    return sendError(res, error);
+    return sendError(res, error, "Failed to retrieve common treatments");
   }
 }
 
@@ -48,23 +45,21 @@ function getAllCommonTreatments(req, res) {
    Search
 -------------------------------------------------------- */
 
-function searchCommonTreatments(req, res) {
+async function searchCommonTreatments(req, res) {
   try {
     const { q = "" } = req.query;
 
-    const treatments =
-      commonTreatmentService.searchCommonTreatments(q);
+    const treatments = await commonTreatmentService.searchCommonTreatments(q);
 
     return res.status(200).json({
       success: true,
-      message:
-        "Common treatments searched successfully",
+      message: "Common treatments searched successfully",
       search_query: String(q).trim(),
       count: treatments.length,
       data: treatments,
     });
   } catch (error) {
-    return sendError(res, error);
+    return sendError(res, error, "Failed to search common treatments");
   }
 }
 
@@ -72,21 +67,19 @@ function searchCommonTreatments(req, res) {
    Read by ID
 -------------------------------------------------------- */
 
-function getCommonTreatmentById(req, res) {
+async function getCommonTreatmentById(req, res) {
   try {
     const { id } = req.params;
 
-    const treatment =
-      commonTreatmentService.getCommonTreatmentById(id);
+    const treatment = await commonTreatmentService.getCommonTreatmentById(id);
 
     return res.status(200).json({
       success: true,
-      message:
-        "Common treatment retrieved successfully",
+      message: "Common treatment retrieved successfully",
       data: treatment,
     });
   } catch (error) {
-    return sendError(res, error);
+    return sendError(res, error, "Failed to retrieve common treatment");
   }
 }
 
@@ -94,15 +87,14 @@ function getCommonTreatmentById(req, res) {
    Update
 -------------------------------------------------------- */
 
-function updateCommonTreatment(req, res) {
+async function updateCommonTreatment(req, res) {
   try {
     const { id } = req.params;
 
-    const treatment =
-      commonTreatmentService.updateCommonTreatment(
-        id,
-        req.body,
-      );
+    const treatment = await commonTreatmentService.updateCommonTreatment(
+      id,
+      req.body,
+    );
 
     return res.status(200).json({
       success: true,
@@ -110,7 +102,7 @@ function updateCommonTreatment(req, res) {
       data: treatment,
     });
   } catch (error) {
-    return sendError(res, error);
+    return sendError(res, error, "Failed to update common treatment");
   }
 }
 
@@ -118,12 +110,12 @@ function updateCommonTreatment(req, res) {
    Delete
 -------------------------------------------------------- */
 
-function deleteCommonTreatment(req, res) {
+async function deleteCommonTreatment(req, res) {
   try {
     const { id } = req.params;
 
     const deletedTreatment =
-      commonTreatmentService.deleteCommonTreatment(id);
+      await commonTreatmentService.deleteCommonTreatment(id);
 
     return res.status(200).json({
       success: true,
@@ -131,7 +123,7 @@ function deleteCommonTreatment(req, res) {
       data: deletedTreatment,
     });
   } catch (error) {
-    return sendError(res, error);
+    return sendError(res, error, "Failed to delete common treatment");
   }
 }
 
@@ -139,19 +131,22 @@ function deleteCommonTreatment(req, res) {
    Statistics
 -------------------------------------------------------- */
 
-function getCommonTreatmentStatistics(req, res) {
+async function getCommonTreatmentStatistics(req, res) {
   try {
     const statistics =
-      commonTreatmentService.getCommonTreatmentStatistics();
+      await commonTreatmentService.getCommonTreatmentStatistics();
 
     return res.status(200).json({
       success: true,
-      message:
-        "Common treatment statistics retrieved successfully",
+      message: "Common treatment statistics retrieved successfully",
       data: statistics,
     });
   } catch (error) {
-    return sendError(res, error);
+    return sendError(
+      res,
+      error,
+      "Failed to retrieve common treatment statistics",
+    );
   }
 }
 

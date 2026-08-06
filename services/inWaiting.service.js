@@ -1,4 +1,7 @@
-import { readSheet, writeSheet } from "../utils/excelDb.js";
+import {
+  readSheet,
+  writeSheet,
+} from "../utils/googleSheets.js";
 
 const IN_WAITING_SHEET = "InWaiting";
 const APPOINTMENTS_SHEET = "Appointments";
@@ -13,250 +16,423 @@ const normalizeValue = (value) => {
   return String(value ?? "").trim();
 };
 
-const createServiceError = (message, code) => {
+const normalizeId = (value) => {
+  return normalizeValue(value).toLowerCase();
+};
+
+const createServiceError = (
+  message,
+  code,
+  statusCode = 500,
+) => {
   const error = new Error(message);
+
   error.code = code;
+  error.statusCode = statusCode;
 
   return error;
+};
+
+const ensureArray = (value) => {
+  return Array.isArray(value)
+    ? value
+    : [];
+};
+
+const formatWaitingRecord = (record) => {
+  return {
+    id: normalizeValue(record?.id),
+    start_time: normalizeValue(
+      record?.start_time,
+    ),
+    end_time: normalizeValue(
+      record?.end_time,
+    ),
+  };
 };
 
 const getCurrentDateTime = () => {
   const now = new Date();
 
-  const formatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Colombo",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hourCycle: "h23",
-  });
+  const formatter =
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Colombo",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    });
 
-  const parts = formatter.formatToParts(now);
+  const parts =
+    formatter.formatToParts(now);
 
-  const values = parts.reduce((result, part) => {
-    if (part.type !== "literal") {
-      result[part.type] = part.value;
-    }
+  const values = parts.reduce(
+    (result, part) => {
+      if (part.type !== "literal") {
+        result[part.type] =
+          part.value;
+      }
 
-    return result;
-  }, {});
+      return result;
+    },
+    {},
+  );
 
   return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}:${values.second}`;
 };
 
-const findAppointment = async (appointmentId) => {
-  const appointments = await readSheet(APPOINTMENTS_SHEET);
-
-  return appointments.find(
-    (appointment) =>
-      normalizeValue(appointment.id) === normalizeValue(appointmentId),
+const getAppointmentId = (
+  appointment,
+) => {
+  return normalizeValue(
+    appointment?.id ??
+      appointment?.appointment_id,
   );
 };
 
-/*
-|--------------------------------------------------------------------------
-| Get all waiting records
-|--------------------------------------------------------------------------
-*/
+const findAppointment = async (
+  appointmentId,
+) => {
+  const appointmentRows =
+    await readSheet(
+      APPOINTMENTS_SHEET,
+    );
 
-export const getAllInWaitingRecords = async () => {
-  const records = await readSheet(IN_WAITING_SHEET);
+  const appointments =
+    ensureArray(appointmentRows);
 
-  return records;
-};
-
-/*
-|--------------------------------------------------------------------------
-| Get active waiting records
-|--------------------------------------------------------------------------
-*/
-
-export const getActiveInWaitingRecords = async () => {
-  const records = await readSheet(IN_WAITING_SHEET);
-
-  return records.filter((record) => {
-    const startTime = normalizeValue(record.start_time);
-    const endTime = normalizeValue(record.end_time);
-
-    return Boolean(startTime) && !endTime;
-  });
-};
-
-/*
-|--------------------------------------------------------------------------
-| Get record by appointment ID
-|--------------------------------------------------------------------------
-*/
-
-export const getInWaitingByAppointmentId = async (appointmentId) => {
-  if (!normalizeValue(appointmentId)) {
-    throw new Error("Appointment ID is required.");
-  }
-
-  const records = await readSheet(IN_WAITING_SHEET);
+  const normalizedAppointmentId =
+    normalizeId(appointmentId);
 
   return (
-    records.find(
-      (record) =>
-        normalizeValue(record.id) === normalizeValue(appointmentId),
+    appointments.find(
+      (appointment) => {
+        return (
+          normalizeId(
+            getAppointmentId(
+              appointment,
+            ),
+          ) ===
+          normalizedAppointmentId
+        );
+      },
     ) || null
   );
 };
 
 /*
 |--------------------------------------------------------------------------
-| Start appointment waiting
+| Get All Waiting Records
 |--------------------------------------------------------------------------
 */
 
-export const startAppointmentWaiting = async (
-  appointmentId,
-) => {
-  const normalizedAppointmentId = String(
-    appointmentId || "",
-  ).trim();
-
-  if (!normalizedAppointmentId) {
-    const error = new Error(
-      "Appointment ID is required.",
-    );
-
-    error.code = "APPOINTMENT_ID_REQUIRED";
-
-    throw error;
-  }
-
-  const appointments = readSheet(
-    "Appointments",
-  );
-
-  const appointmentExists =
-    appointments.some((appointment) => {
-      return (
-        String(
-          appointment?.id ||
-            appointment?.appointment_id ||
-            "",
-        ).trim() === normalizedAppointmentId
+export const getAllInWaitingRecords =
+  async () => {
+    const waitingRows =
+      await readSheet(
+        IN_WAITING_SHEET,
       );
-    });
 
-  if (!appointmentExists) {
-    const error = new Error(
-      "Appointment not found.",
-    );
+    return ensureArray(waitingRows)
+      .map(formatWaitingRecord)
+      .filter((record) => record.id);
+  };
 
-    error.code =
-      "APPOINTMENT_NOT_FOUND";
+/*
+|--------------------------------------------------------------------------
+| Get Active Waiting Records
+|--------------------------------------------------------------------------
+*/
 
-    throw error;
-  }
-
-  const waitingRecords = readSheet(
-    "InWaiting",
-  );
-
-  const currentTime =
-    new Date().toISOString();
-
-  const existingRecordIndex =
-    waitingRecords.findIndex((record) => {
-      return (
-        String(record?.id || "").trim() ===
-        normalizedAppointmentId
+export const getActiveInWaitingRecords =
+  async () => {
+    const waitingRows =
+      await readSheet(
+        IN_WAITING_SHEET,
       );
-    });
 
-  if (existingRecordIndex !== -1) {
-    const existingRecord =
-      waitingRecords[existingRecordIndex];
+    return ensureArray(waitingRows)
+      .map(formatWaitingRecord)
+      .filter((record) => {
+        const startTime =
+          normalizeValue(
+            record.start_time,
+          );
 
-    const updatedRecord = {
-      ...existingRecord,
+        const endTime =
+          normalizeValue(
+            record.end_time,
+          );
+
+        return Boolean(startTime) &&
+          !endTime;
+      });
+  };
+
+/*
+|--------------------------------------------------------------------------
+| Get Waiting Record by Appointment ID
+|--------------------------------------------------------------------------
+*/
+
+export const getInWaitingByAppointmentId =
+  async (appointmentId) => {
+    const normalizedAppointmentId =
+      normalizeId(appointmentId);
+
+    if (!normalizedAppointmentId) {
+      throw createServiceError(
+        "Appointment ID is required.",
+        "APPOINTMENT_ID_REQUIRED",
+        400,
+      );
+    }
+
+    const waitingRows =
+      await readSheet(
+        IN_WAITING_SHEET,
+      );
+
+    const waitingRecords =
+      ensureArray(waitingRows)
+        .map(formatWaitingRecord);
+
+    return (
+      waitingRecords.find(
+        (record) => {
+          return (
+            normalizeId(record.id) ===
+            normalizedAppointmentId
+          );
+        },
+      ) || null
+    );
+  };
+
+/*
+|--------------------------------------------------------------------------
+| Start Appointment Waiting
+|--------------------------------------------------------------------------
+*/
+
+export const startAppointmentWaiting =
+  async (appointmentId) => {
+    const normalizedAppointmentId =
+      normalizeValue(
+        appointmentId,
+      );
+
+    if (!normalizedAppointmentId) {
+      throw createServiceError(
+        "Appointment ID is required.",
+        "APPOINTMENT_ID_REQUIRED",
+        400,
+      );
+    }
+
+    const appointment =
+      await findAppointment(
+        normalizedAppointmentId,
+      );
+
+    if (!appointment) {
+      throw createServiceError(
+        "Appointment not found.",
+        "APPOINTMENT_NOT_FOUND",
+        404,
+      );
+    }
+
+    const waitingRows =
+      await readSheet(
+        IN_WAITING_SHEET,
+      );
+
+    const waitingRecords =
+      ensureArray(waitingRows)
+        .map(formatWaitingRecord);
+
+    const normalizedId =
+      normalizeId(
+        normalizedAppointmentId,
+      );
+
+    const existingRecordIndex =
+      waitingRecords.findIndex(
+        (record) => {
+          return (
+            normalizeId(record.id) ===
+            normalizedId
+          );
+        },
+      );
+
+    const currentTime =
+      getCurrentDateTime();
+
+    if (
+      existingRecordIndex !== -1
+    ) {
+      const existingRecord =
+        waitingRecords[
+          existingRecordIndex
+        ];
+
+      if (
+        normalizeValue(
+          existingRecord.start_time,
+        ) &&
+        !normalizeValue(
+          existingRecord.end_time,
+        )
+      ) {
+        throw createServiceError(
+          "This appointment is already waiting.",
+          "ALREADY_WAITING",
+          409,
+        );
+      }
+
+      const updatedRecord = {
+        id: normalizeValue(
+          existingRecord.id,
+        ),
+        start_time: currentTime,
+        end_time: "",
+      };
+
+      waitingRecords[
+        existingRecordIndex
+      ] = updatedRecord;
+
+      await writeSheet(
+        IN_WAITING_SHEET,
+        waitingRecords,
+      );
+
+      return {
+        isUpdated: true,
+        record: updatedRecord,
+      };
+    }
+
+    const newRecord = {
       id: normalizedAppointmentId,
       start_time: currentTime,
       end_time: "",
     };
 
-    waitingRecords[existingRecordIndex] =
-      updatedRecord;
+    waitingRecords.push(
+      newRecord,
+    );
 
-    writeSheet(
-      "InWaiting",
+    await writeSheet(
+      IN_WAITING_SHEET,
       waitingRecords,
     );
 
     return {
-      isUpdated: true,
-      record: updatedRecord,
+      isUpdated: false,
+      record: newRecord,
     };
-  }
-
-  const newRecord = {
-    id: normalizedAppointmentId,
-    start_time: currentTime,
-    end_time: "",
   };
 
-  waitingRecords.push(newRecord);
-
-  writeSheet(
-    "InWaiting",
-    waitingRecords,
-  );
-
-  return {
-    isUpdated: false,
-    record: newRecord,
-  };
-};
 /*
 |--------------------------------------------------------------------------
-| End appointment waiting
+| End Appointment Waiting
 |--------------------------------------------------------------------------
 */
 
-export const endAppointmentWaiting = async (appointmentId) => {
-  const normalizedAppointmentId = normalizeValue(appointmentId);
+export const endAppointmentWaiting =
+  async (appointmentId) => {
+    const normalizedAppointmentId =
+      normalizeValue(
+        appointmentId,
+      );
 
-  if (!normalizedAppointmentId) {
-    throw new Error("Appointment ID is required.");
-  }
+    if (!normalizedAppointmentId) {
+      throw createServiceError(
+        "Appointment ID is required.",
+        "APPOINTMENT_ID_REQUIRED",
+        400,
+      );
+    }
 
-  const waitingRecords = await readSheet(IN_WAITING_SHEET);
+    const waitingRows =
+      await readSheet(
+        IN_WAITING_SHEET,
+      );
 
-  const recordIndex = waitingRecords.findIndex(
-    (record) =>
-      normalizeValue(record.id) === normalizedAppointmentId,
-  );
+    const waitingRecords =
+      ensureArray(waitingRows)
+        .map(formatWaitingRecord);
 
-  if (recordIndex === -1) {
-    throw createServiceError(
-      "No waiting record was found for this appointment.",
-      "WAITING_NOT_FOUND",
+    const normalizedId =
+      normalizeId(
+        normalizedAppointmentId,
+      );
+
+    const recordIndex =
+      waitingRecords.findIndex(
+        (record) => {
+          return (
+            normalizeId(record.id) ===
+            normalizedId
+          );
+        },
+      );
+
+    if (recordIndex === -1) {
+      throw createServiceError(
+        "No waiting record was found for this appointment.",
+        "WAITING_NOT_FOUND",
+        404,
+      );
+    }
+
+    const waitingRecord =
+      waitingRecords[recordIndex];
+
+    if (
+      normalizeValue(
+        waitingRecord.end_time,
+      )
+    ) {
+      throw createServiceError(
+        "This waiting period has already been completed.",
+        "WAITING_ALREADY_COMPLETED",
+        409,
+      );
+    }
+
+    if (
+      !normalizeValue(
+        waitingRecord.start_time,
+      )
+    ) {
+      throw createServiceError(
+        "This waiting period has not been started.",
+        "WAITING_NOT_STARTED",
+        409,
+      );
+    }
+
+    const updatedRecord = {
+      ...waitingRecord,
+      end_time:
+        getCurrentDateTime(),
+    };
+
+    waitingRecords[recordIndex] =
+      updatedRecord;
+
+    await writeSheet(
+      IN_WAITING_SHEET,
+      waitingRecords,
     );
-  }
 
-  const waitingRecord = waitingRecords[recordIndex];
-
-  if (normalizeValue(waitingRecord.end_time)) {
-    throw createServiceError(
-      "This waiting period has already been completed.",
-      "WAITING_ALREADY_COMPLETED",
-    );
-  }
-
-  const updatedRecord = {
-    ...waitingRecord,
-    end_time: getCurrentDateTime(),
+    return updatedRecord;
   };
-
-  waitingRecords[recordIndex] = updatedRecord;
-
-  await writeSheet(IN_WAITING_SHEET, waitingRecords);
-
-  return updatedRecord;
-};

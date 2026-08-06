@@ -1,13 +1,65 @@
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 
-import { readSheet ,writeSheet} from "../utils/excelDb.js";
+import {
+  readSheet,
+  writeSheet,
+} from "../utils/googleSheets.js";
+
 import { generateToken } from "../utils/token.js";
+
+const USERS_SHEET = "Users";
+
+const ALLOWED_ROLES = [
+  "Admin",
+  "Dentist",
+  "Cashier",
+  "Receptionist",
+];
+
+/* ========================================================
+   General helpers
+======================================================== */
+
+const createError = (
+  message,
+  statusCode = 400,
+) => {
+  const error = new Error(message);
+
+  error.statusCode = statusCode;
+
+  return error;
+};
 
 const normalizeText = (value) => {
   return String(value ?? "")
     .trim()
     .toLowerCase();
+};
+
+const normalizeEmail = (email = "") => {
+  return String(email)
+    .trim()
+    .toLowerCase();
+};
+
+const normalizeUsername = (username = "") => {
+  return String(username)
+    .trim()
+    .toLowerCase();
+};
+
+const getNow = () => {
+  return new Date().toISOString();
+};
+
+const generateUserId = () => {
+  const randomPart = crypto
+    .randomBytes(4)
+    .toString("hex");
+
+  return `USR_${randomPart}`;
 };
 
 const sanitizeUser = (user) => {
@@ -18,7 +70,9 @@ const sanitizeUser = (user) => {
   return {
     id: user.id,
     name: user.name,
+    email: user.email,
     username: user.username,
+    phone: user.phone,
     role: user.role,
     status: user.status,
     created_at: user.created_at,
@@ -26,81 +80,121 @@ const sanitizeUser = (user) => {
   };
 };
 
-const findUserByUsername = async (username) => {
-  const users = await readSheet("Users");
+/* ========================================================
+   User lookup helpers
+======================================================== */
 
-  const normalizedUsername = normalizeText(username);
+const findUserByUsername = async (
+  username,
+) => {
+  const users =
+    await readSheet(USERS_SHEET);
 
-  return users.find(
-    (user) => normalizeText(user.username) === normalizedUsername,
-  );
+  const normalizedUsername =
+    normalizeUsername(username);
+
+  return users.find((user) => {
+    return (
+      normalizeUsername(user?.username) ===
+      normalizedUsername
+    );
+  });
 };
 
 const findUserById = async (userId) => {
-  const users = await readSheet("Users");
+  const users =
+    await readSheet(USERS_SHEET);
 
-  return users.find((user) => String(user.id).trim() === String(userId).trim());
+  const normalizedUserId = String(
+    userId ?? "",
+  ).trim();
+
+  return users.find((user) => {
+    return (
+      String(user?.id ?? "").trim() ===
+      normalizedUserId
+    );
+  });
 };
+
+/* ========================================================
+   User status validation
+======================================================== */
 
 const validateUserStatus = (user) => {
-  const status = normalizeText(user?.status);
+  const status =
+    normalizeText(user?.status);
 
-  if (!status) {
-    const error = new Error("This user account is inactive.");
-
-    error.statusCode = 403;
-
-    throw error;
+  /*
+   * An empty status or any status other than Active
+   * prevents login and authenticated access.
+   */
+  if (status !== "active") {
+    throw createError(
+      "This user account is inactive.",
+      403,
+    );
   }
 };
 
-export const loginUser = async ({ username, password }) => {
-  if (!username || !password) {
-    const error = new Error("Username and password are required.");
+/* ========================================================
+   Login
+======================================================== */
 
-    error.statusCode = 400;
-
-    throw error;
+export const loginUser = async ({
+  username,
+  password,
+}) => {
+  if (
+    !normalizeUsername(username) ||
+    !password
+  ) {
+    throw createError(
+      "Username and password are required.",
+      400,
+    );
   }
 
-  const user = await findUserByUsername(username);
+  const user =
+    await findUserByUsername(username);
 
   if (!user) {
-    const error = new Error("Invalid username or password.");
-
-    error.statusCode = 401;
-
-    throw error;
+    throw createError(
+      "Invalid username or password.",
+      401,
+    );
   }
 
-//  validateUserStatus(user);
+  validateUserStatus(user);
 
-  const passwordHash = user.password_hash || user.password;
+  /*
+   * password_hash is the recommended field.
+   * password is retained as a compatibility fallback
+   * for users already saved in the old Excel database.
+   */
+  const passwordHash =
+    user.password_hash ||
+    user.password;
 
   if (!passwordHash) {
-    const error = new Error(
+    throw createError(
       "The user account does not have a password configured.",
+      500,
+    );
+  }
+
+  const passwordMatches =
+    await bcrypt.compare(
+      String(password),
+      String(passwordHash),
     );
 
-    error.statusCode = 500;
-
-    throw error;
-  }
-
-  const passwordMatches = await bcrypt.compare(
-    String(password),
-    String(passwordHash),
-  );
-
   if (!passwordMatches) {
-    const error = new Error("Invalid username or password.");
-
-    error.statusCode = 401;
-
-    throw error;
+    throw createError(
+      "Invalid username or password.",
+      401,
+    );
   }
-
-  const safeUser = sanitizeUser(user);
 
   const token = generateToken({
     userId: user.id,
@@ -110,19 +204,32 @@ export const loginUser = async ({ username, password }) => {
 
   return {
     token,
-    user: safeUser,
+    user: sanitizeUser(user),
   };
 };
 
-export const getAuthenticatedUser = async (userId) => {
-  const user = await findUserById(userId);
+/* ========================================================
+   Get authenticated user
+======================================================== */
+
+export const getAuthenticatedUser = async (
+  userId,
+) => {
+  if (!String(userId ?? "").trim()) {
+    throw createError(
+      "User ID is required.",
+      400,
+    );
+  }
+
+  const user =
+    await findUserById(userId);
 
   if (!user) {
-    const error = new Error("Authenticated user was not found.");
-
-    error.statusCode = 404;
-
-    throw error;
+    throw createError(
+      "Authenticated user was not found.",
+      404,
+    );
   }
 
   validateUserStatus(user);
@@ -130,47 +237,36 @@ export const getAuthenticatedUser = async (userId) => {
   return sanitizeUser(user);
 };
 
-export const hashPassword = async (password) => {
-  if (!password || String(password).length < 6) {
-    const error = new Error("Password must contain at least 6 characters.");
+/* ========================================================
+   Hash password
+======================================================== */
 
-    error.statusCode = 400;
+export const hashPassword = async (
+  password,
+) => {
+  const passwordValue =
+    String(password ?? "");
 
-    throw error;
+  if (passwordValue.length < 6) {
+    throw createError(
+      "Password must contain at least 6 characters.",
+      400,
+    );
   }
 
-  const saltRounds = 12;
-
-  return bcrypt.hash(String(password), saltRounds);
+  return bcrypt.hash(
+    passwordValue,
+    12,
+  );
 };
 
+/* ========================================================
+   Register user
+======================================================== */
 
-
-
-
-
-const USERS_SHEET = "Users";
-
-const createError = (message, statusCode = 400) => {
-  const error = new Error(message);
-  error.statusCode = statusCode;
-  return error;
-};
-
-const normalizeEmail = (email = "") =>
-  String(email).trim().toLowerCase();
-
-const normalizeUsername = (username = "") =>
-  String(username).trim().toLowerCase();
-
-const getNow = () => new Date().toISOString();
-
-const generateUserId = () => {
-  const randomPart = crypto.randomBytes(4).toString("hex");
-  return `USR_${randomPart}`;
-};
-
-export const registerUser = async (data) => {
+export const registerUser = async (
+  data = {},
+) => {
   const {
     name,
     email,
@@ -180,99 +276,152 @@ export const registerUser = async (data) => {
     role = "Receptionist",
   } = data;
 
-  if (!name?.trim()) {
-    throw createError("Name is required");
-  }
+  const formattedName =
+    String(name ?? "").trim();
 
-  if (!email?.trim()) {
-    throw createError("Email is required");
-  }
+  const formattedEmail =
+    normalizeEmail(email);
 
-  if (!username?.trim()) {
-    throw createError("Username is required");
-  }
+  const formattedUsername =
+    normalizeUsername(username);
 
-  if (!password) {
-    throw createError("Password is required");
-  }
+  const passwordValue =
+    String(password ?? "");
 
-  if (password.length < 6) {
+  const formattedRole =
+    String(role ?? "").trim();
+
+  if (!formattedName) {
     throw createError(
-      "Password must contain at least 6 characters",
+      "Name is required",
+      400,
     );
   }
 
-  const allowedRoles = [
-    "Admin",
-    "Dentist","Cashier",
-    "Receptionist",
-  ];
-
-  if (!allowedRoles.includes(role)) {
-    throw createError("Invalid user role");
+  if (!formattedEmail) {
+    throw createError(
+      "Email is required",
+      400,
+    );
   }
 
-  const users = await readSheet(USERS_SHEET);
+  if (!formattedUsername) {
+    throw createError(
+      "Username is required",
+      400,
+    );
+  }
 
-  const formattedEmail = normalizeEmail(email);
-  const formattedUsername = normalizeUsername(username);
+  if (!passwordValue) {
+    throw createError(
+      "Password is required",
+      400,
+    );
+  }
 
-  const emailExists = users.some(
-    (user) =>
-      normalizeEmail(user.email) === formattedEmail,
-  );
+  if (passwordValue.length < 6) {
+    throw createError(
+      "Password must contain at least 6 characters",
+      400,
+    );
+  }
+
+  if (
+    !ALLOWED_ROLES.includes(
+      formattedRole,
+    )
+  ) {
+    throw createError(
+      `Invalid user role. Use ${ALLOWED_ROLES.join(
+        ", ",
+      )}`,
+      400,
+    );
+  }
+
+  const users =
+    await readSheet(USERS_SHEET);
+
+  const emailExists =
+    users.some((user) => {
+      return (
+        normalizeEmail(user?.email) ===
+        formattedEmail
+      );
+    });
 
   if (emailExists) {
-    throw createError("Email is already registered", 409);
+    throw createError(
+      "Email is already registered",
+      409,
+    );
   }
 
-  const usernameExists = users.some(
-    (user) =>
-      normalizeUsername(user.username) ===
-      formattedUsername,
-  );
+  const usernameExists =
+    users.some((user) => {
+      return (
+        normalizeUsername(
+          user?.username,
+        ) === formattedUsername
+      );
+    });
 
   if (usernameExists) {
-    throw createError("Username is already registered", 409);
+    throw createError(
+      "Username is already registered",
+      409,
+    );
   }
 
-  const hashedPassword = await bcrypt.hash(password, 12);
-  const now = getNow();
+  const passwordHash =
+    await hashPassword(passwordValue);
+
+  const timestamp = getNow();
 
   const newUser = {
     id: generateUserId(),
-    name: name.trim(),
-    email: formattedEmail,
-    username: formattedUsername,
-    password: hashedPassword,
-    phone: String(phone).trim(),
-    role,
-    status: "Active",
-    created_at: now,
-    updated_at: now,
+
+    name:
+      formattedName,
+
+    email:
+      formattedEmail,
+
+    username:
+      formattedUsername,
+
+    phone:
+      String(phone ?? "").trim(),
+
+    password_hash:
+      passwordHash,
+
+    role:
+      formattedRole,
+
+    status:
+      "Active",
+
+    created_at:
+      timestamp,
+
+    updated_at:
+      timestamp,
   };
 
   users.push(newUser);
 
-  await writeSheet(USERS_SHEET, users);
+  await writeSheet(
+    USERS_SHEET,
+    users,
+  );
 
-  return {
-    id: newUser.id,
-    name: newUser.name,
-    email: newUser.email,
-    username: newUser.username,
-    phone: newUser.phone,
-    role: newUser.role,
-    status: newUser.status,
-    created_at: newUser.created_at,
-  };
+  return sanitizeUser(newUser);
 };
-
-
-
 
 export default {
   loginUser,
   getAuthenticatedUser,
-  hashPassword,registerUser
+  hashPassword,
+  registerUser,
 };

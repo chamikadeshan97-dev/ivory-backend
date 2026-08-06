@@ -9,16 +9,13 @@ import sendError from "../utils/sendError.js";
 |
 | POST /api/drugs
 |
-| Body:
-| {
-|   "name": "Amoxicillin 500mg"
-| }
-|
 */
 
-function createDrug(req, res) {
+async function createDrug(req, res) {
   try {
-    const drug = drugService.createDrug(req.body);
+    const drug = await drugService.createDrug(
+      req.body,
+    );
 
     res.status(201).json({
       success: true,
@@ -37,23 +34,14 @@ function createDrug(req, res) {
 |
 | POST /api/drugs/bulk
 |
-| Body:
-| {
-|   "drugs": [
-|     {
-|       "name": "Amoxicillin 500mg"
-|     },
-|     {
-|       "name": "Paracetamol 500mg"
-|     }
-|   ]
-| }
-|
 */
 
-function createDrugsBulk(req, res) {
+async function createDrugsBulk(req, res) {
   try {
-    const result = drugService.createDrugsBulk(req.body);
+    const result =
+      await drugService.createDrugsBulk(
+        req.body,
+      );
 
     res.status(201).json({
       success: true,
@@ -72,16 +60,13 @@ function createDrugsBulk(req, res) {
 |
 | GET /api/drugs
 |
-| Optional:
-| GET /api/drugs?search=amoxicillin
-| GET /api/drugs?sort=asc
-| GET /api/drugs?sort=desc
-|
 */
 
-function getDrugs(req, res) {
+async function getDrugs(req, res) {
   try {
-    const drugs = drugService.getDrugs(req.query);
+    const drugs = await drugService.getDrugs(
+      req.query,
+    );
 
     res.json({
       success: true,
@@ -102,9 +87,11 @@ function getDrugs(req, res) {
 |
 */
 
-function searchDrugs(req, res) {
+async function searchDrugs(req, res) {
   try {
-    const drugs = drugService.searchDrugs(req.query.query);
+    const drugs = await drugService.searchDrugs(
+      req.query.query,
+    );
 
     res.json({
       success: true,
@@ -125,9 +112,11 @@ function searchDrugs(req, res) {
 |
 */
 
-function getDrugById(req, res) {
+async function getDrugById(req, res) {
   try {
-    const drug = drugService.getDrugById(req.params.id);
+    const drug = await drugService.getDrugById(
+      req.params.id,
+    );
 
     res.json({
       success: true,
@@ -146,16 +135,11 @@ function getDrugById(req, res) {
 | PUT /api/drugs/:id
 | PATCH /api/drugs/:id
 |
-| Body:
-| {
-|   "name": "Amoxicillin 250mg"
-| }
-|
 */
 
-function updateDrug(req, res) {
+async function updateDrug(req, res) {
   try {
-    const drug = drugService.updateDrug(
+    const drug = await drugService.updateDrug(
       req.params.id,
       req.body,
     );
@@ -179,9 +163,11 @@ function updateDrug(req, res) {
 |
 */
 
-function deleteDrug(req, res) {
+async function deleteDrug(req, res) {
   try {
-    const drug = drugService.deleteDrug(req.params.id);
+    const drug = await drugService.deleteDrug(
+      req.params.id,
+    );
 
     res.json({
       success: true,

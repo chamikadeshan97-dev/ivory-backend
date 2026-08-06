@@ -1,10 +1,19 @@
-import { readSheet, writeSheet } from "../utils/excelDb.js";
+import {
+  readSheet,
+  writeSheet,
+} from "../utils/googleSheets.js";
 
 import appError from "../utils/appError.js";
+
+/* ========================================================
+   Constants
+======================================================== */
+
 const APPOINTMENT_STATUSES = [
   "Pending",
   "Confirmed",
   "Checked In",
+  "Waiting",
   "In Treatment",
   "Treatment Done",
   "Payment Pending",
@@ -12,165 +21,661 @@ const APPOINTMENT_STATUSES = [
   "Completed",
   "Cancelled",
 ];
+
+const ALLOWED_STATUS_TRANSITIONS = {
+  Pending: [
+    "Confirmed",
+    "Checked In",
+    "Cancelled",
+  ],
+
+  Confirmed: [
+    "Checked In",
+    "Cancelled",
+  ],
+
+  "Checked In": [
+    "Waiting",
+    "In Treatment",
+    "Cancelled",
+  ],
+
+  Waiting: [
+    "In Treatment",
+    "Cancelled",
+  ],
+
+  "In Treatment": [
+    "Treatment Done",
+  ],
+
+  "Treatment Done": [
+    "Payment Pending",
+    "Paid",
+  ],
+
+  "Payment Pending": [
+    "Paid",
+    "Completed",
+  ],
+
+  Paid: [
+    "Completed",
+  ],
+
+  Completed: [],
+  Cancelled: [],
+};
+
+/* ========================================================
+   General helpers
+======================================================== */
+
 function getNow() {
   return new Date().toISOString();
 }
 
-export function createAppointment(data) {
-  const appointments = readSheet("Appointments");
+function normalizeId(value) {
+  return String(value ?? "").trim();
+}
 
-  if (!data.patient_id) {
-    throw appError("Patient is required", 400);
+function normalizeText(value) {
+  return String(value ?? "").trim();
+}
+
+function toNumber(value, fallback = 0) {
+  const numberValue = Number(value);
+
+  return Number.isFinite(numberValue)
+    ? numberValue
+    : fallback;
+}
+
+function getAppointmentId(appointment) {
+  return normalizeId(
+    appointment?.id ??
+      appointment?.appointment_id,
+  );
+}
+
+function getPatientId(patient) {
+  return normalizeId(
+    patient?.id ??
+      patient?.patient_id,
+  );
+}
+
+function getDentistId(dentist) {
+  return normalizeId(
+    dentist?.id ??
+      dentist?.dentist_id,
+  );
+}
+
+function getTreatmentId(treatment) {
+  return normalizeId(
+    treatment?.id ??
+      treatment?.treatment_id,
+  );
+}
+
+function getTreatmentAppointmentId(treatment) {
+  return normalizeId(
+    treatment?.appointment_id ??
+      treatment?.appointmentId ??
+      treatment?.appointmentID,
+  );
+}
+
+function isCancelledAppointment(appointment) {
+  return (
+    normalizeText(appointment?.status)
+      .toLowerCase() === "cancelled"
+  );
+}
+
+function compareAppointments(first, second) {
+  const firstDate = normalizeText(
+    first?.appointment_date ??
+      first?.date,
+  );
+
+  const secondDate = normalizeText(
+    second?.appointment_date ??
+      second?.date,
+  );
+
+  const dateComparison =
+    firstDate.localeCompare(secondDate);
+
+  if (dateComparison !== 0) {
+    return dateComparison;
   }
 
-  if (!data.dentist_id) {
-    throw appError("Dentist is required", 400);
-  }
+  const firstTime = normalizeText(
+    first?.appointment_time,
+  );
 
-  if (!data.appointment_date) {
-    throw appError("Appointment date is required", 400);
-  }
+  const secondTime = normalizeText(
+    second?.appointment_time,
+  );
 
-  if (!data.appointment_time) {
-    throw appError("Appointment time is required", 400);
-  }
+  return firstTime.localeCompare(secondTime);
+}
 
-  const formattedDate = data.appointment_date.replaceAll("-", "");
+function filterByDateRange(
+  records,
+  dateField,
+  startDate,
+  endDate,
+) {
+  return records.filter((record) => {
+    const recordDate = normalizeText(
+      record?.[dateField],
+    ).slice(0, 10);
 
-  const newId = `APP_${formattedDate}_${String(
-    appointments.length + 1,
+    return (
+      recordDate &&
+      recordDate >= startDate &&
+      recordDate <= endDate
+    );
+  });
+}
+
+/* ========================================================
+   Appointment ID generator
+======================================================== */
+
+function generateAppointmentId(
+  appointments,
+  appointmentDate,
+) {
+  const formattedDate = appointmentDate.replaceAll(
+    "-",
+    "",
+  );
+
+  const idPrefix = `APP_${formattedDate}_`;
+
+  let highestNumber = 0;
+
+  appointments.forEach((appointment) => {
+    const appointmentId =
+      getAppointmentId(appointment);
+
+    if (!appointmentId.startsWith(idPrefix)) {
+      return;
+    }
+
+    const numberPart = appointmentId.slice(
+      idPrefix.length,
+    );
+
+    const appointmentNumber =
+      Number(numberPart);
+
+    if (
+      Number.isInteger(appointmentNumber) &&
+      appointmentNumber > highestNumber
+    ) {
+      highestNumber = appointmentNumber;
+    }
+  });
+
+  return `${idPrefix}${String(
+    highestNumber + 1,
   ).padStart(4, "0")}`;
+}
+
+/* ========================================================
+   Payment summary helper
+======================================================== */
+
+function createTreatmentPaymentData({
+  treatment,
+  payments,
+}) {
+  if (!treatment) {
+    return {
+      treatmentId: "",
+      treatmentFee: 0,
+      treatmentPayments: [],
+      totalPaid: 0,
+      remainingAmount: 0,
+      paymentStatus: "Not Paid",
+    };
+  }
+
+  const treatmentId =
+    getTreatmentId(treatment);
+
+  const treatmentFee = toNumber(
+    treatment?.treatment_fee ??
+      treatment?.treatment_charge,
+  );
+
+  const treatmentPayments = treatmentId
+    ? payments.filter((payment) => {
+        return (
+          normalizeId(
+            payment?.treatment_id,
+          ) === treatmentId
+        );
+      })
+    : [];
+
+  const totalPaid =
+    treatmentPayments.reduce(
+      (total, payment) => {
+        return (
+          total +
+          toNumber(
+            payment?.payment_amount ??
+              payment?.amount,
+          )
+        );
+      },
+      0,
+    );
+
+  const remainingAmount = Math.max(
+    treatmentFee - totalPaid,
+    0,
+  );
+
+  let paymentStatus = "Not Paid";
+
+  if (
+    treatmentFee > 0 &&
+    totalPaid >= treatmentFee
+  ) {
+    paymentStatus = "Paid";
+  } else if (totalPaid > 0) {
+    paymentStatus = "Partial";
+  }
+
+  return {
+    treatmentId,
+    treatmentFee,
+    treatmentPayments,
+    totalPaid,
+    remainingAmount,
+    paymentStatus,
+  };
+}
+
+/* ========================================================
+   Create appointment
+======================================================== */
+
+export async function createAppointment(data) {
+  if (!data?.patient_id) {
+    throw appError(
+      "Patient is required",
+      400,
+    );
+  }
+
+  if (!data?.dentist_id) {
+    throw appError(
+      "Dentist is required",
+      400,
+    );
+  }
+
+  if (!data?.appointment_date) {
+    throw appError(
+      "Appointment date is required",
+      400,
+    );
+  }
+
+  if (!data?.appointment_time) {
+    throw appError(
+      "Appointment time is required",
+      400,
+    );
+  }
+
+  const requestedStatus =
+    normalizeText(data.status) ||
+    "Pending";
+
+  if (
+    !APPOINTMENT_STATUSES.includes(
+      requestedStatus,
+    )
+  ) {
+    throw appError(
+      `Invalid appointment status: ${requestedStatus}`,
+      400,
+    );
+  }
+
+  const appointments =
+    await readSheet("Appointments");
+
+  const appointmentDate =
+    normalizeText(data.appointment_date);
+
+  const appointmentTime =
+    normalizeText(data.appointment_time);
+
+  /*
+   * Prevent an exact duplicate booking.
+   */
+  const duplicateAppointment =
+    appointments.find((appointment) => {
+      return (
+        normalizeId(
+          appointment?.patient_id,
+        ) ===
+          normalizeId(data.patient_id) &&
+        normalizeText(
+          appointment?.appointment_date,
+        ) === appointmentDate &&
+        normalizeText(
+          appointment?.appointment_time,
+        ) === appointmentTime &&
+        !isCancelledAppointment(appointment)
+      );
+    });
+
+  if (duplicateAppointment) {
+    throw appError(
+      "This patient already has an appointment at the selected date and time",
+      409,
+    );
+  }
+
+  const sameDayAppointments =
+    appointments.filter((appointment) => {
+      return (
+        normalizeText(
+          appointment?.appointment_date,
+        ) === appointmentDate &&
+        !isCancelledAppointment(appointment)
+      );
+    });
+
+  const timestamp = getNow();
 
   const appointment = {
-    id: newId,
-    patient_id: data.patient_id,
-    dentist_id: data.dentist_id,
-    appointment_number: data.appointment_number,
-    appointment_date: data.appointment_date,
-    appointment_time: data.appointment_time,
-    reason_for_visit: data.reason_for_visit || "",
-    status: data.status || "Pending",
-    created_at: getNow(),
-    updated_at: getNow(),
+    id: generateAppointmentId(
+      appointments,
+      appointmentDate,
+    ),
+
+    patient_id:
+      normalizeId(data.patient_id),
+
+    dentist_id:
+      normalizeId(data.dentist_id),
+
+    appointment_number:
+      data.appointment_number ??
+      sameDayAppointments.length + 1,
+
+    appointment_date:
+      appointmentDate,
+
+    appointment_time:
+      appointmentTime,
+
+    reason_for_visit:
+      normalizeText(
+        data.reason_for_visit,
+      ),
+
+    status:
+      requestedStatus,
+
+    checked_in_time: "",
+
+    treatment_started_at: "",
+
+    treatment_completed_at: "",
+
+    completed_at: "",
+
+    created_at:
+      timestamp,
+
+    updated_at:
+      timestamp,
   };
 
   appointments.push(appointment);
-  writeSheet("Appointments", appointments);
+
+  await writeSheet(
+    "Appointments",
+    appointments,
+  );
 
   return appointment;
 }
-export function getAllAppointments() {
-  const appointments = readSheet("Appointments");
-  const patients = readSheet("Patients");
-  const dentists = readSheet("Dentists");
 
-  // Sort by date then time
-  appointments.sort((a, b) => {
-    if (a.appointment_date !== b.appointment_date) {
-      return a.appointment_date.localeCompare(b.appointment_date);
-    }
+/* ========================================================
+   Get all appointments
+======================================================== */
 
-    return a.appointment_time.localeCompare(b.appointment_time);
-  });
+export async function getAllAppointments() {
+  const [
+    appointments,
+    patients,
+    dentists,
+  ] = await Promise.all([
+    readSheet("Appointments"),
+    readSheet("Patients"),
+    readSheet("Dentists"),
+  ]);
 
-  // Queue counter for each day
+  const sortedAppointments = [
+    ...appointments,
+  ].sort(compareAppointments);
+
+  const patientMap = new Map(
+    patients.map((patient) => [
+      getPatientId(patient),
+      patient,
+    ]),
+  );
+
+  const dentistMap = new Map(
+    dentists.map((dentist) => [
+      getDentistId(dentist),
+      dentist,
+    ]),
+  );
+
   const queueMap = {};
 
-  return appointments.map((appointment) => {
-    const patient = patients.find((p) => p.id === appointment.patient_id);
-    const dentist = dentists.find((d) => d.id === appointment.dentist_id);
+  return sortedAppointments.map(
+    (appointment) => {
+      const appointmentDate =
+        normalizeText(
+          appointment?.appointment_date,
+        );
 
-    if (!queueMap[appointment.appointment_date]) {
-      queueMap[appointment.appointment_date] = 1;
-    }
+      const patient = patientMap.get(
+        normalizeId(
+          appointment?.patient_id,
+        ),
+      );
 
-    const queue_number = queueMap[appointment.appointment_date]++;
+      const dentist = dentistMap.get(
+        normalizeId(
+          appointment?.dentist_id,
+        ),
+      );
 
-    return {
-      ...appointment,
-      queue_number,
-      patient_name: patient?.name || "",
-      phone: patient?.phone || "",
-      dentist_name: dentist?.name || "",
-    };
-  });
+      let queueNumber = null;
+
+      /*
+       * Cancelled appointments do not receive
+       * a queue number.
+       */
+      if (!isCancelledAppointment(appointment)) {
+        if (!queueMap[appointmentDate]) {
+          queueMap[appointmentDate] = 1;
+        }
+
+        queueNumber =
+          queueMap[appointmentDate];
+
+        queueMap[appointmentDate] += 1;
+      }
+
+      return {
+        ...appointment,
+
+        queue_number:
+          queueNumber,
+
+        patient_name:
+          patient?.name ??
+          patient?.patient_name ??
+          "",
+
+        phone:
+          patient?.phone ??
+          patient?.mobile ??
+          "",
+
+        dentist_name:
+          dentist?.name ??
+          dentist?.dentist_name ??
+          "",
+      };
+    },
+  );
 }
-export function updateAppointmentStatus(id, status) {
-  const appointments = readSheet("Appointments");
 
-  if (!id) {
-    throw appError("Appointment ID is required", 400);
-  }
+/* ========================================================
+   Update appointment status
+======================================================== */
 
-  if (!status) {
-    throw appError("Status is required", 400);
-  }
+export async function updateAppointmentStatus(
+  id,
+  status,
+) {
+  const normalizedAppointmentId =
+    normalizeId(id);
 
-  if (!APPOINTMENT_STATUSES.includes(status)) {
+  const normalizedStatus =
+    normalizeText(status);
+
+  if (!normalizedAppointmentId) {
     throw appError(
-      "Invalid status. Use Pending, Confirmed, Checked In, In Treatment, Treatment Done, Payment Pending, Paid, Completed, or Cancelled",
+      "Appointment ID is required",
       400,
     );
   }
 
-  const index = appointments.findIndex((appointment) => appointment.id === id);
-
-  if (index === -1) {
-    throw appError("Appointment not found", 404);
+  if (!normalizedStatus) {
+    throw appError(
+      "Status is required",
+      400,
+    );
   }
-
-  const currentAppointment = appointments[index];
-
-  const currentAppointmentDate =
-    currentAppointment.appointment_date || currentAppointment.date;
-
-  if (!currentAppointmentDate) {
-    throw appError("Appointment date is required", 400);
-  }
-
-  /*
-   * Validate status workflow
-   */
-  const allowedTransitions = {
-    Pending: ["Confirmed", "Checked In", "Cancelled"],
-    Confirmed: ["Checked In", "Cancelled"],
-    "Checked In": ["In Treatment", "Cancelled"],
-    "In Treatment": ["Treatment Done"],
-    "Treatment Done": ["Payment Pending", "Paid"],
-    "Payment Pending": ["Paid", "Completed"],
-    Paid: ["Completed"],
-    Completed: [],
-    Cancelled: [],
-  };
-
-  const currentStatus = currentAppointment.status;
 
   if (
-    currentStatus &&
-    allowedTransitions[currentStatus] &&
-    !allowedTransitions[currentStatus].includes(status) &&
-    currentStatus !== status
+    !APPOINTMENT_STATUSES.includes(
+      normalizedStatus,
+    )
   ) {
     throw appError(
-      `Cannot change appointment status from ${currentStatus} to ${status}`,
+      `Invalid status. Use ${APPOINTMENT_STATUSES.join(
+        ", ",
+      )}`,
+      400,
+    );
+  }
+
+  const appointments =
+    await readSheet("Appointments");
+
+  const index = appointments.findIndex(
+    (appointment) => {
+      return (
+        getAppointmentId(appointment) ===
+        normalizedAppointmentId
+      );
+    },
+  );
+
+  if (index === -1) {
+    throw appError(
+      "Appointment not found",
+      404,
+    );
+  }
+
+  const currentAppointment =
+    appointments[index];
+
+  const currentAppointmentDate =
+    normalizeText(
+      currentAppointment?.appointment_date ??
+        currentAppointment?.date,
+    );
+
+  if (!currentAppointmentDate) {
+    throw appError(
+      "Appointment date is required",
+      400,
+    );
+  }
+
+  const currentStatus =
+    normalizeText(
+      currentAppointment?.status,
+    ) || "Pending";
+
+  const allowedStatuses =
+    ALLOWED_STATUS_TRANSITIONS[
+      currentStatus
+    ];
+
+  if (
+    currentStatus !== normalizedStatus &&
+    Array.isArray(allowedStatuses) &&
+    !allowedStatuses.includes(
+      normalizedStatus,
+    )
+  ) {
+    throw appError(
+      `Cannot change appointment status from ${currentStatus} to ${normalizedStatus}`,
       400,
     );
   }
 
   /*
-   * Only one appointment can be in treatment
-   * for the same appointment date.
+   * Only one patient may be in treatment
+   * for the selected date.
    */
-  if (status === "In Treatment") {
-    const alreadyInTreatment = appointments.find((appointment) => {
-      const appointmentDate = appointment.appointment_date || appointment.date;
+  if (
+    normalizedStatus ===
+    "In Treatment"
+  ) {
+    const alreadyInTreatment =
+      appointments.find((appointment) => {
+        const appointmentDate =
+          normalizeText(
+            appointment?.appointment_date ??
+              appointment?.date,
+          );
 
-      return (
-        appointment.id !== id &&
-        appointmentDate === currentAppointmentDate &&
-        appointment.status === "In Treatment"
-      );
-    });
+        return (
+          getAppointmentId(appointment) !==
+            normalizedAppointmentId &&
+          appointmentDate ===
+            currentAppointmentDate &&
+          normalizeText(
+            appointment?.status,
+          ) === "In Treatment"
+        );
+      });
 
     if (alreadyInTreatment) {
       throw appError(
@@ -180,533 +685,1007 @@ export function updateAppointmentStatus(id, status) {
     }
   }
 
+  const timestamp = getNow();
+
   const updatedAppointment = {
     ...currentAppointment,
-    status,
-    updated_at: getNow(),
+
+    status:
+      normalizedStatus,
+
+    updated_at:
+      timestamp,
   };
 
   /*
-   * Save the check-in time only once.
-   *
-   * Updating the appointment later will not overwrite
-   * the original check-in time.
-   */
-  if (status === "Checked In" && !currentAppointment.checked_in_time) {
-    updatedAppointment.checked_in_time = getNow();
-  }
-
-  /*
-   * Save when treatment begins.
-   */
-  if (status === "In Treatment" && !currentAppointment.treatment_started_at) {
-    updatedAppointment.treatment_started_at = getNow();
-  }
-
-  /*
-   * Save when treatment finishes.
+   * Store each status timestamp only once.
    */
   if (
-    status === "Treatment Done" &&
-    !currentAppointment.treatment_completed_at
+    normalizedStatus ===
+      "Checked In" &&
+    !currentAppointment.checked_in_time
   ) {
-    updatedAppointment.treatment_completed_at = getNow();
+    updatedAppointment.checked_in_time =
+      timestamp;
   }
 
-  /*
-   * Save when appointment is completed.
-   */
-  if (status === "Completed" && !currentAppointment.completed_at) {
-    updatedAppointment.completed_at = getNow();
+  if (
+    normalizedStatus ===
+      "In Treatment" &&
+    !currentAppointment
+      .treatment_started_at
+  ) {
+    updatedAppointment.treatment_started_at =
+      timestamp;
   }
 
-  appointments[index] = updatedAppointment;
+  if (
+    normalizedStatus ===
+      "Treatment Done" &&
+    !currentAppointment
+      .treatment_completed_at
+  ) {
+    updatedAppointment.treatment_completed_at =
+      timestamp;
+  }
 
-  writeSheet("Appointments", appointments);
+  if (
+    normalizedStatus ===
+      "Completed" &&
+    !currentAppointment.completed_at
+  ) {
+    updatedAppointment.completed_at =
+      timestamp;
+  }
+
+  appointments[index] =
+    updatedAppointment;
+
+  await writeSheet(
+    "Appointments",
+    appointments,
+  );
 
   /*
-   * Create current waiting queue using check-in time.
-   *
-   * Only checked-in patients from the same date
-   * are included.
+   * Waiting queue includes only patients who
+   * are currently in Checked In status.
    */
   const waitingQueue = appointments
     .filter((appointment) => {
-      const appointmentDate = appointment.appointment_date || appointment.date;
+      const appointmentDate =
+        normalizeText(
+          appointment?.appointment_date ??
+            appointment?.date,
+        );
 
       return (
-        appointmentDate === currentAppointmentDate &&
-        appointment.status === "Checked In" &&
-        appointment.checked_in_time
+        appointmentDate ===
+          currentAppointmentDate &&
+        normalizeText(
+          appointment?.status,
+        ) === "Checked In" &&
+        appointment?.checked_in_time
       );
     })
-    .sort(
-      (a, b) =>
-        new Date(a.checked_in_time).getTime() -
-        new Date(b.checked_in_time).getTime(),
-    )
-    .map((appointment, queueIndex) => ({
-      ...appointment,
-      current_queue_no: queueIndex + 1,
-    }));
+    .sort((first, second) => {
+      const firstTime = new Date(
+        first.checked_in_time,
+      ).getTime();
 
-  const queuePosition = waitingQueue.find(
-    (appointment) => appointment.id === id,
-  );
+      const secondTime = new Date(
+        second.checked_in_time,
+      ).getTime();
+
+      return firstTime - secondTime;
+    })
+    .map(
+      (
+        appointment,
+        queueIndex,
+      ) => ({
+        ...appointment,
+
+        current_queue_no:
+          queueIndex + 1,
+      }),
+    );
+
+  const queuePosition =
+    waitingQueue.find(
+      (appointment) => {
+        return (
+          getAppointmentId(
+            appointment,
+          ) === normalizedAppointmentId
+        );
+      },
+    );
 
   return {
-    appointment: appointments[index],
-    queue_position: queuePosition?.current_queue_no || null,
-    waiting_queue: waitingQueue,
+    appointment:
+      updatedAppointment,
+
+    queue_position:
+      queuePosition?.current_queue_no ??
+      null,
+
+    waiting_queue:
+      waitingQueue,
   };
 }
 
-export function updateAppointment(id, data) {
-  const appointments = readSheet("Appointments");
+/* ========================================================
+   Update appointment
+======================================================== */
 
-  if (!id) {
-    throw appError("Appointment ID is required", 400);
-  }
+export async function updateAppointment(
+  id,
+  data,
+) {
+  const normalizedAppointmentId =
+    normalizeId(id);
 
-  const index = appointments.findIndex((appointment) => appointment.id === id);
-
-  if (index === -1) {
-    throw appError("Appointment not found", 404);
-  }
-
-  if (data.status && !APPOINTMENT_STATUSES.includes(data.status)) {
+  if (!normalizedAppointmentId) {
     throw appError(
-      "Invalid status. Use Pending, Confirmed, Completed, or Cancelled",
+      "Appointment ID is required",
       400,
     );
   }
 
+  const appointments =
+    await readSheet("Appointments");
+
+  const index = appointments.findIndex(
+    (appointment) => {
+      return (
+        getAppointmentId(appointment) ===
+        normalizedAppointmentId
+      );
+    },
+  );
+
+  if (index === -1) {
+    throw appError(
+      "Appointment not found",
+      404,
+    );
+  }
+
+  if (
+    data?.status &&
+    !APPOINTMENT_STATUSES.includes(
+      normalizeText(data.status),
+    )
+  ) {
+    throw appError(
+      `Invalid status. Use ${APPOINTMENT_STATUSES.join(
+        ", ",
+      )}`,
+      400,
+    );
+  }
+
+  const currentAppointment =
+    appointments[index];
+
   appointments[index] = {
-    ...appointments[index],
+    ...currentAppointment,
 
-    patient_id: data.patient_id ?? appointments[index].patient_id,
-    dentist_id: data.dentist_id ?? appointments[index].dentist_id,
+    patient_id:
+      data?.patient_id ??
+      currentAppointment.patient_id,
+
+    dentist_id:
+      data?.dentist_id ??
+      currentAppointment.dentist_id,
+
+    appointment_number:
+      data?.appointment_number ??
+      currentAppointment.appointment_number,
+
     appointment_date:
-      data.appointment_date ?? appointments[index].appointment_date,
-    appointment_time:
-      data.appointment_time ?? appointments[index].appointment_time,
-    reason_for_visit:
-      data.reason_for_visit ?? appointments[index].reason_for_visit,
-    status: data.status ?? appointments[index].status,
+      data?.appointment_date ??
+      currentAppointment.appointment_date,
 
-    updated_at: getNow(),
+    appointment_time:
+      data?.appointment_time ??
+      currentAppointment.appointment_time,
+
+    reason_for_visit:
+      data?.reason_for_visit ??
+      currentAppointment.reason_for_visit,
+
+    status:
+      data?.status ??
+      currentAppointment.status,
+
+    updated_at:
+      getNow(),
   };
 
-  writeSheet("Appointments", appointments);
+  await writeSheet(
+    "Appointments",
+    appointments,
+  );
 
   return appointments[index];
 }
-export function getAppointments(date) {
-  const appointments = readSheet("Appointments");
-  const patients = readSheet("Patients");
-  const dentists = readSheet("Dentists");
-  const treatments = readSheet("Treatments");
-  const payments = readSheet("Payments");
 
-  let filteredAppointments = appointments;
+/* ========================================================
+   Get appointments
+======================================================== */
 
-  if (date) {
-    filteredAppointments = appointments.filter(
-      (appointment) =>
-        String(appointment.appointment_date).trim() === String(date).trim(),
+export async function getAppointments(date) {
+  const [
+    appointments,
+    patients,
+    dentists,
+    treatments,
+    payments,
+  ] = await Promise.all([
+    readSheet("Appointments"),
+    readSheet("Patients"),
+    readSheet("Dentists"),
+    readSheet("Treatments"),
+    readSheet("Payments"),
+  ]);
+
+  const normalizedDate =
+    normalizeText(date);
+
+  let filteredAppointments =
+    appointments;
+
+  if (normalizedDate) {
+    filteredAppointments =
+      appointments.filter(
+        (appointment) => {
+          return (
+            normalizeText(
+              appointment
+                ?.appointment_date,
+            ) === normalizedDate
+          );
+        },
+      );
+  }
+
+  filteredAppointments = [
+    ...filteredAppointments,
+  ].sort(compareAppointments);
+
+  const patientMap = new Map(
+    patients.map((patient) => [
+      getPatientId(patient),
+      patient,
+    ]),
+  );
+
+  const dentistMap = new Map(
+    dentists.map((dentist) => [
+      getDentistId(dentist),
+      dentist,
+    ]),
+  );
+
+  const treatmentMap = new Map();
+
+  treatments.forEach((treatment) => {
+    const appointmentId =
+      getTreatmentAppointmentId(
+        treatment,
+      );
+
+    /*
+     * Keep the first treatment associated
+     * with an appointment.
+     */
+    if (
+      appointmentId &&
+      !treatmentMap.has(appointmentId)
+    ) {
+      treatmentMap.set(
+        appointmentId,
+        treatment,
+      );
+    }
+  });
+
+  const queueMap = {};
+
+  return filteredAppointments.map(
+    (appointment) => {
+      const appointmentId =
+        getAppointmentId(appointment);
+
+      const appointmentDate =
+        normalizeText(
+          appointment?.appointment_date,
+        );
+
+      const patient = patientMap.get(
+        normalizeId(
+          appointment?.patient_id,
+        ),
+      );
+
+      const dentist = dentistMap.get(
+        normalizeId(
+          appointment?.dentist_id,
+        ),
+      );
+
+      const treatment =
+        treatmentMap.get(
+          appointmentId,
+        );
+
+      const {
+        treatmentId,
+        treatmentFee,
+        treatmentPayments,
+        totalPaid,
+        remainingAmount,
+        paymentStatus,
+      } = createTreatmentPaymentData({
+        treatment,
+        payments,
+      });
+
+      let queueNumber = null;
+
+      if (!isCancelledAppointment(appointment)) {
+        if (!queueMap[appointmentDate]) {
+          queueMap[appointmentDate] = 1;
+        }
+
+        queueNumber =
+          queueMap[appointmentDate];
+
+        queueMap[appointmentDate] += 1;
+      }
+
+      return {
+        queue_no:
+          queueNumber,
+
+        appointment_id:
+          appointmentId,
+
+        id:
+          appointmentId,
+
+        patient_id:
+          appointment?.patient_id,
+
+        patient_name:
+          patient?.name ??
+          patient?.patient_name ??
+          "",
+
+        phone:
+          patient?.phone ??
+          patient?.mobile ??
+          "",
+
+        age:
+          patient?.age ?? "",
+
+        gender:
+          patient?.gender ?? "",
+
+        address:
+          patient?.address ?? "",
+
+        dentist_id:
+          appointment?.dentist_id,
+
+        dentist_name:
+          dentist?.name ??
+          dentist?.dentist_name ??
+          "",
+
+        appointment_date:
+          appointment?.appointment_date,
+
+        appointment_time:
+          appointment?.appointment_time,
+
+        appointment_number:
+          appointment?.appointment_number,
+
+        checked_in_time:
+          appointment?.checked_in_time ??
+          "",
+
+        treatment_started_at:
+          appointment
+            ?.treatment_started_at ??
+          "",
+
+        treatment_completed_at:
+          appointment
+            ?.treatment_completed_at ??
+          "",
+
+        reason_for_visit:
+          appointment?.reason_for_visit ??
+          "",
+
+        status:
+          appointment?.status ?? "",
+
+        treatment_id:
+          treatmentId,
+
+        treatment_date:
+          treatment?.treatment_date ??
+          "",
+
+        next_appointment_date:
+          treatment
+            ?.next_appointment_date ??
+          "",
+
+        diagnosis:
+          treatment?.diagnosis ?? "",
+
+        tooth_number:
+          treatment?.tooth_number ?? "",
+
+        treatment_details:
+          treatment
+            ?.treatment_details ??
+          treatment
+            ?.treatment_performed ??
+          "",
+
+        doctor_notes:
+          treatment?.doctor_notes ?? "",
+
+        prescription:
+          treatment?.prescription ?? "",
+
+        treatment_fee:
+          treatmentFee,
+
+        treatment_charge:
+          treatmentFee,
+
+        total_paid:
+          totalPaid,
+
+        remaining_amount:
+          remainingAmount,
+
+        payment_status:
+          paymentStatus,
+
+        payment_count:
+          treatmentPayments.length,
+
+        created_at:
+          appointment?.created_at,
+
+        updated_at:
+          appointment?.updated_at,
+      };
+    },
+  );
+}
+
+/* ========================================================
+   Get appointment by ID
+======================================================== */
+
+export async function getAppointmentById(id) {
+  const normalizedAppointmentId =
+    normalizeId(id);
+
+  if (!normalizedAppointmentId) {
+    throw appError(
+      "Appointment ID is required",
+      400,
     );
   }
 
-  /*
-   * Sort by appointment date and appointment time before
-   * generating the queue number.
-   */
-  filteredAppointments = [...filteredAppointments].sort((a, b) => {
-    const dateA = String(a.appointment_date || "");
-    const dateB = String(b.appointment_date || "");
+  const [
+    appointments,
+    patients,
+    dentists,
+    treatments,
+    payments,
+  ] = await Promise.all([
+    readSheet("Appointments"),
+    readSheet("Patients"),
+    readSheet("Dentists"),
+    readSheet("Treatments"),
+    readSheet("Payments"),
+  ]);
 
-    if (dateA !== dateB) {
-      return dateA.localeCompare(dateB);
-    }
-
-    const timeA = String(a.appointment_time || "");
-    const timeB = String(b.appointment_time || "");
-
-    return timeA.localeCompare(timeB);
-  });
-
-  return filteredAppointments.map((appointment, index) => {
-    const patient = patients.find(
-      (item) =>
-        String(item.id).trim() === String(appointment.patient_id).trim(),
-    );
-
-    const dentist = dentists.find(
-      (item) =>
-        String(item.id).trim() === String(appointment.dentist_id).trim(),
-    );
-
-    const treatment = treatments.find((item) => {
-      const treatmentAppointmentId =
-        item.appointment_id || item.appointmentId || item.appointmentID || "";
-
+  const appointment =
+    appointments.find((item) => {
       return (
-        String(treatmentAppointmentId).trim() === String(appointment.id).trim()
+        getAppointmentId(item) ===
+        normalizedAppointmentId
       );
     });
 
-    const treatmentId = treatment?.id || "";
-
-    const treatmentFee = Number(
-      treatment?.treatment_fee ?? treatment?.treatment_fee ?? 0,
-    );
-
-    const treatmentPayments = treatmentId
-      ? payments.filter(
-          (payment) =>
-            String(payment.treatment_id).trim() === String(treatmentId).trim(),
-        )
-      : [];
-
-    const totalPaid = treatmentPayments.reduce(
-      (total, payment) => total + Number(payment.payment_amount || 0),
-      0,
-    );
-
-    const remainingAmount = Math.max(treatmentFee - totalPaid, 0);
-
-    let paymentStatus = "Not Paid";
-
-    if (treatmentFee > 0 && totalPaid >= treatmentFee) {
-      paymentStatus = "Paid";
-    } else if (totalPaid > 0) {
-      paymentStatus = "Partial";
-    }
-
-    return {
-      queue_no: index + 1,
-
-      appointment_id: appointment.id,
-      id: appointment.id,
-
-      patient_id: appointment.patient_id,
-      patient_name: patient?.name || "",
-      phone: patient?.phone || "",
-      age: patient?.age || "",
-      gender: patient?.gender || "",
-      address: patient?.address || "",
-
-      dentist_id: appointment.dentist_id,
-      dentist_name: dentist?.name || "",
-
-      appointment_date: appointment.appointment_date,
-      appointment_time: appointment.appointment_time,
-      appointment_number: appointment.appointment_number,
-      checked_in_time: appointment.checked_in_time || "",
-      reason_for_visit: appointment.reason_for_visit || "",
-      status: appointment.status || "",
-
-      treatment_id: treatmentId,
-      treatment_date: treatment?.treatment_date || "",
-      next_appointment_date: treatment?.next_appointment_date || "",
-      doctor_notes: treatment?.doctor_notes || "",
-      prescription: treatment?.prescription || "",
-
-      // Current Excel column spelling
-      treatment_fee: treatmentFee,
-
-      // Compatibility aliases
-      treatment_fee: treatmentFee,
-      treatment_charge: treatmentFee,
-
-      total_paid: totalPaid,
-      remaining_amount: remainingAmount,
-      payment_status: paymentStatus,
-      payment_count: treatmentPayments.length,
-
-      created_at: appointment.created_at,
-      updated_at: appointment.updated_at,
-    };
-  });
-}
-export function getAppointmentById(id) {
-  const appointments = readSheet("Appointments");
-  const patients = readSheet("Patients");
-  const dentists = readSheet("Dentists");
-  const treatments = readSheet("Treatments");
-  const payments = readSheet("Payments");
-
-  const appointment = appointments.find(
-    (item) => String(item.id).trim() === String(id).trim(),
-  );
-
   if (!appointment) {
-    throw appError("Appointment not found", 404);
+    throw appError(
+      "Appointment not found",
+      404,
+    );
   }
 
-  const patient = patients.find((item) => item.id === appointment.patient_id);
+  const patient = patients.find(
+    (item) => {
+      return (
+        getPatientId(item) ===
+        normalizeId(
+          appointment?.patient_id,
+        )
+      );
+    },
+  );
 
-  const dentist = dentists.find((item) => item.id === appointment.dentist_id);
+  const dentist = dentists.find(
+    (item) => {
+      return (
+        getDentistId(item) ===
+        normalizeId(
+          appointment?.dentist_id,
+        )
+      );
+    },
+  );
 
-  const treatment = treatments.find((item) => {
-    const treatmentAppointmentId =
-      item.appointment_id || item.appointmentId || item.appointmentID || "";
+  const treatment = treatments.find(
+    (item) => {
+      return (
+        getTreatmentAppointmentId(
+          item,
+        ) === normalizedAppointmentId
+      );
+    },
+  );
 
-    return (
-      String(treatmentAppointmentId).trim() === String(appointment.id).trim()
-    );
+  const {
+    treatmentId,
+    treatmentFee,
+    treatmentPayments,
+    totalPaid,
+    remainingAmount,
+    paymentStatus,
+  } = createTreatmentPaymentData({
+    treatment,
+    payments,
   });
 
-  const treatmentId = treatment?.id || "";
+  const sameDayAppointments =
+    appointments
+      .filter((item) => {
+        return (
+          normalizeText(
+            item?.appointment_date,
+          ) ===
+            normalizeText(
+              appointment
+                ?.appointment_date,
+            ) &&
+          !isCancelledAppointment(item)
+        );
+      })
+      .sort(compareAppointments);
 
-  const treatmentFee = Number(
-    treatment?.treatment_fee ?? treatment?.treatment_fee ?? 0,
-  );
-
-  const treatmentPayments = treatmentId
-    ? payments.filter(
-        (payment) =>
-          String(payment.treatment_id).trim() === String(treatmentId).trim(),
-      )
-    : [];
-
-  const totalPaid = treatmentPayments.reduce(
-    (total, payment) => total + Number(payment.payment_amount || 0),
-    0,
-  );
-
-  const remainingAmount = Math.max(treatmentFee - totalPaid, 0);
-
-  let paymentStatus = "Not Paid";
-
-  if (treatmentFee > 0 && totalPaid >= treatmentFee) {
-    paymentStatus = "Paid";
-  } else if (totalPaid > 0) {
-    paymentStatus = "Partial";
-  }
-
-  const sameDayAppointments = appointments
-    .filter((item) => item.appointment_date === appointment.appointment_date)
-    .sort((a, b) => {
-      const timeA = a.appointment_time || "";
-      const timeB = b.appointment_time || "";
-
-      return timeA.localeCompare(timeB);
-    });
-
-  const queueIndex = sameDayAppointments.findIndex(
-    (item) => item.id === appointment.id,
-  );
+  const queueIndex =
+    sameDayAppointments.findIndex(
+      (item) => {
+        return (
+          getAppointmentId(item) ===
+          normalizedAppointmentId
+        );
+      },
+    );
 
   return {
-    appointment_id: appointment.id,
-    id: appointment.id,
-    queue_no: queueIndex >= 0 ? queueIndex + 1 : 0,
+    appointment_id:
+      normalizedAppointmentId,
 
-    patient_id: appointment.patient_id,
-    patient_name: patient?.name || "",
-    phone: patient?.phone || "",
-    age: patient?.age || "",
-    gender: patient?.gender || "",
-    address: patient?.address || "",
+    id:
+      normalizedAppointmentId,
 
-    dentist_id: appointment.dentist_id,
-    dentist_name: dentist?.name || "",
+    queue_no:
+      isCancelledAppointment(appointment)
+        ? null
+        : queueIndex >= 0
+          ? queueIndex + 1
+          : null,
 
-    appointment_date: appointment.appointment_date,
-    appointment_time: appointment.appointment_time,
-    appointment_number: appointment.appointment_number,
-    reason_for_visit: appointment.reason_for_visit || "",
-    status: appointment.status || "",
+    patient_id:
+      appointment?.patient_id,
 
-    treatment_id: treatmentId,
-    treatment_date: treatment?.treatment_date || "",
-    next_appointment_date: treatment?.next_appointment_date || "",
-    doctor_notes: treatment?.doctor_notes || "",
-    prescription: treatment?.prescription || "",
+    patient_name:
+      patient?.name ??
+      patient?.patient_name ??
+      "",
 
-    // Keep the current Excel spelling
-    treatment_fee: treatmentFee,
+    phone:
+      patient?.phone ??
+      patient?.mobile ??
+      "",
 
-    // Aliases for frontend compatibility
-    treatment_fee: treatmentFee,
-    treatment_charge: treatmentFee,
+    age:
+      patient?.age ?? "",
 
-    total_paid: totalPaid,
-    remaining_amount: remainingAmount,
-    payment_status: paymentStatus,
-    payment_count: treatmentPayments.length,
+    gender:
+      patient?.gender ?? "",
 
-    created_at: appointment.created_at,
-    updated_at: appointment.updated_at,
+    address:
+      patient?.address ?? "",
+
+    dentist_id:
+      appointment?.dentist_id,
+
+    dentist_name:
+      dentist?.name ??
+      dentist?.dentist_name ??
+      "",
+
+    appointment_date:
+      appointment?.appointment_date,
+
+    appointment_time:
+      appointment?.appointment_time,
+
+    appointment_number:
+      appointment?.appointment_number,
+
+    checked_in_time:
+      appointment?.checked_in_time ??
+      "",
+
+    treatment_started_at:
+      appointment
+        ?.treatment_started_at ??
+      "",
+
+    treatment_completed_at:
+      appointment
+        ?.treatment_completed_at ??
+      "",
+
+    completed_at:
+      appointment?.completed_at ??
+      "",
+
+    reason_for_visit:
+      appointment?.reason_for_visit ??
+      "",
+
+    status:
+      appointment?.status ?? "",
+
+    treatment_id:
+      treatmentId,
+
+    treatment_date:
+      treatment?.treatment_date ??
+      "",
+
+    next_appointment_date:
+      treatment
+        ?.next_appointment_date ??
+      "",
+
+    diagnosis:
+      treatment?.diagnosis ?? "",
+
+    tooth_number:
+      treatment?.tooth_number ?? "",
+
+    treatment_details:
+      treatment?.treatment_details ??
+      treatment?.treatment_performed ??
+      "",
+
+    doctor_notes:
+      treatment?.doctor_notes ?? "",
+
+    prescription:
+      treatment?.prescription ?? "",
+
+    treatment_fee:
+      treatmentFee,
+
+    treatment_charge:
+      treatmentFee,
+
+    total_paid:
+      totalPaid,
+
+    remaining_amount:
+      remainingAmount,
+
+    payment_status:
+      paymentStatus,
+
+    payment_count:
+      treatmentPayments.length,
+
+    payments:
+      treatmentPayments,
+
+    created_at:
+      appointment?.created_at,
+
+    updated_at:
+      appointment?.updated_at,
   };
 }
 
-const filterByDateRange = (records, dateField, startDate, endDate) => {
-  return records.filter((record) => {
-    const recordDate = String(record?.[dateField] || "")
-      .trim()
-      .slice(0, 10);
+/* ========================================================
+   Get appointments by date range
+======================================================== */
 
-    return recordDate && recordDate >= startDate && recordDate <= endDate;
-  });
-};
+export async function getAppointmentsByDateRange(
+  startDate,
+  endDate,
+) {
+  if (!startDate || !endDate) {
+    throw appError(
+      "Start date and end date are required",
+      400,
+    );
+  }
 
-export function getAppointmentsByDateRange(startDate, endDate) {
-  const appointments = readSheet("Appointments");
+  const appointments =
+    await readSheet("Appointments");
+
   return filterByDateRange(
     appointments,
     "appointment_date",
     startDate,
     endDate,
-  ).sort((a, b) => {
-    const dateCompare = String(a.appointment_date || "").localeCompare(
-      String(b.appointment_date || ""),
-    );
-
-    if (dateCompare !== 0) {
-      return dateCompare;
-    }
-
-    return String(a.appointment_time || "").localeCompare(
-      String(b.appointment_time || ""),
-    );
-  });
+  ).sort(compareAppointments);
 }
 
-export function getAppointmentFullDetailsService(appointmentId) {
-  const appointments = readSheet("Appointments");
-  const patients = readSheet("Patients");
-  const dentists = readSheet("Dentists");
-  const treatments = readSheet("Treatments");
-  const payments = readSheet("Payments");
+/* ========================================================
+   Get full appointment details
+======================================================== */
 
-  const appointment = appointments.find(
-    (item) => String(item.id || item.id) === String(appointmentId),
-  );
+export async function getAppointmentFullDetailsService(
+  appointmentId,
+) {
+  const normalizedAppointmentId =
+    normalizeId(appointmentId);
 
-  if (!appointment) {
-    const error = new Error("Appointment not found");
-    error.statusCode = 404;
-    throw error;
+  if (!normalizedAppointmentId) {
+    throw appError(
+      "Appointment ID is required",
+      400,
+    );
   }
 
-  const appointmentPatientId = appointment.patient_id;
+  const [
+    appointments,
+    patients,
+    dentists,
+    treatments,
+    payments,
+  ] = await Promise.all([
+    readSheet("Appointments"),
+    readSheet("Patients"),
+    readSheet("Dentists"),
+    readSheet("Treatments"),
+    readSheet("Payments"),
+  ]);
 
-  const appointmentDentistId = appointment.dentist_id;
+  const appointment =
+    appointments.find((item) => {
+      return (
+        getAppointmentId(item) ===
+        normalizedAppointmentId
+      );
+    });
+
+  if (!appointment) {
+    throw appError(
+      "Appointment not found",
+      404,
+    );
+  }
 
   const patient =
-    patients.find(
-      (item) =>
-        String(item.id || item.patient_id) === String(appointmentPatientId),
-    ) || null;
+    patients.find((item) => {
+      return (
+        getPatientId(item) ===
+        normalizeId(
+          appointment?.patient_id,
+        )
+      );
+    }) ?? null;
 
   const dentist =
-    dentists.find(
-      (item) =>
-        String(item.id || item.dentist_id) === String(appointmentDentistId),
-    ) || null;
+    dentists.find((item) => {
+      return (
+        getDentistId(item) ===
+        normalizeId(
+          appointment?.dentist_id,
+        )
+      );
+    }) ?? null;
 
-  const appointmentTreatments = treatments.filter(
-    (item) => String(item.appointment_id) === String(appointmentId),
-  );
+  const appointmentTreatments =
+    treatments.filter((item) => {
+      return (
+        getTreatmentAppointmentId(
+          item,
+        ) === normalizedAppointmentId
+      );
+    });
 
-  const treatmentIds = appointmentTreatments.map((item) =>
-    String(item.id || item.treatment_id),
-  );
+  const treatmentIds =
+    appointmentTreatments
+      .map(getTreatmentId)
+      .filter(Boolean);
 
-  const appointmentPayments = payments.filter((payment) => {
-    const paymentAppointmentId = payment.appointment_id;
+  const appointmentPayments =
+    payments.filter((payment) => {
+      const paymentAppointmentId =
+        normalizeId(
+          payment?.appointment_id,
+        );
 
-    const paymentTreatmentId = String(payment.treatment_id || "");
+      const paymentTreatmentId =
+        normalizeId(
+          payment?.treatment_id,
+        );
 
-    return (
-      String(paymentAppointmentId || "") === String(appointmentId) ||
-      treatmentIds.includes(paymentTreatmentId)
+      return (
+        paymentAppointmentId ===
+          normalizedAppointmentId ||
+        treatmentIds.includes(
+          paymentTreatmentId,
+        )
+      );
+    });
+
+  /*
+   * Calculate treatment charge from Treatments.
+   * This prevents duplicate treatment charges when
+   * one treatment has multiple payment installments.
+   */
+  const totalTreatmentCharge =
+    appointmentTreatments.reduce(
+      (total, treatment) => {
+        return (
+          total +
+          toNumber(
+            treatment?.treatment_fee ??
+              treatment
+                ?.treatment_charge,
+          )
+        );
+      },
+      0,
     );
-  });
 
-  const totalTreatmentCharge = appointmentPayments.reduce(
-    (total, payment) =>
-      total +
-      Number(
-        payment.treatment_charge ??
-          payment.treatment_fee ??
-          payment.charge ??
-          0,
-      ),
+  const totalPaid =
+    appointmentPayments.reduce(
+      (total, payment) => {
+        return (
+          total +
+          toNumber(
+            payment?.payment_amount ??
+              payment?.amount,
+          )
+        );
+      },
+      0,
+    );
+
+  const balance = Math.max(
+    totalTreatmentCharge - totalPaid,
     0,
   );
 
-  const totalPaid = appointmentPayments.reduce(
-    (total, payment) =>
-      total + Number(payment.payment_amount ?? payment.amount ?? 0),
-    0,
-  );
+  let paymentStatus = "Unpaid";
+
+  if (
+    totalTreatmentCharge > 0 &&
+    totalPaid >= totalTreatmentCharge
+  ) {
+    paymentStatus = "Paid";
+  } else if (totalPaid > 0) {
+    paymentStatus = "Partial";
+  }
 
   return {
     appointment,
     patient,
     dentist,
-    treatments: appointmentTreatments,
-    payments: appointmentPayments,
+
+    treatments:
+      appointmentTreatments,
+
+    payments:
+      appointmentPayments,
+
     payment_summary: {
-      total_treatment_charge: totalTreatmentCharge,
-      total_paid: totalPaid,
-      balance: Math.max(totalTreatmentCharge - totalPaid, 0),
+      total_treatment_charge:
+        totalTreatmentCharge,
+
+      total_paid:
+        totalPaid,
+
+      balance,
+
       payment_status:
-        totalPaid <= 0
-          ? "Unpaid"
-          : totalPaid < totalTreatmentCharge
-            ? "Partial"
-            : "Paid",
+        paymentStatus,
     },
   };
 }
 
-export function getAppointmentByTreatmentId({ treatmentId }) {
-  const appointments = readSheet("Appointments");
-  /* -----------------------------------------------------
-     Get appointment using treatment ID
-  ----------------------------------------------------- */
-  if (treatmentId) {
-    const treatments = readSheet("Treatments");
+/* ========================================================
+   Get appointment using treatment ID
+======================================================== */
 
-    const treatment = treatments.find(
-      (item) =>
-        String(item.id || item.treatment_id).trim() ===
-        String(treatmentId).trim(),
-    );
+export async function getAppointmentByTreatmentId({
+  treatmentId,
+}) {
+  const normalizedTreatmentId =
+    normalizeId(treatmentId);
+
+  if (normalizedTreatmentId) {
+    const [
+      appointments,
+      treatments,
+    ] = await Promise.all([
+      readSheet("Appointments"),
+      readSheet("Treatments"),
+    ]);
+
+    const treatment =
+      treatments.find((item) => {
+        return (
+          getTreatmentId(item) ===
+          normalizedTreatmentId
+        );
+      });
 
     if (!treatment) {
-      const error = new Error("Treatment not found");
-
-      error.statusCode = 404;
-      throw error;
+      throw appError(
+        "Treatment not found",
+        404,
+      );
     }
 
-    const appointmentId = treatment.appointment_id || treatment.appointmentId;
-
-    if (!appointmentId) {
-      const error = new Error(
-        "Appointment ID is not available for this treatment",
+    const appointmentId =
+      getTreatmentAppointmentId(
+        treatment,
       );
 
-      error.statusCode = 404;
-      throw error;
+    if (!appointmentId) {
+      throw appError(
+        "Appointment ID is not available for this treatment",
+        404,
+      );
     }
 
-    const appointment = appointments.find(
-      (item) =>
-        String(item.id || item.appointment_id).trim() ===
-        String(appointmentId).trim(),
-    );
+    const appointment =
+      appointments.find((item) => {
+        return (
+          getAppointmentId(item) ===
+          appointmentId
+        );
+      });
 
     if (!appointment) {
-      const error = new Error("Appointment not found for this treatment");
-
-      error.statusCode = 404;
-      throw error;
+      throw appError(
+        "Appointment not found for this treatment",
+        404,
+      );
     }
 
     return {
@@ -715,14 +1694,16 @@ export function getAppointmentByTreatmentId({ treatmentId }) {
     };
   }
 
-  /* -----------------------------------------------------
-     Filter appointments using date
-  ----------------------------------------------------- */
-  let filteredAppointments = appointments;
+  const appointments =
+    await readSheet("Appointments");
+
+  const sortedAppointments = [
+    ...appointments,
+  ].sort(compareAppointments);
 
   return {
     type: "list",
-    data: filteredAppointments,
-    total: filteredAppointments.length,
+    data: sortedAppointments,
+    total: sortedAppointments.length,
   };
 }
