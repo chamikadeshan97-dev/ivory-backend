@@ -9,6 +9,10 @@ import reportRoutes from "./report.routes.js";
 import authRoutes from "./auth.routes.js";
 import commonTreatmentRouter from "./commonTreatments.routes.js";
 import dailyQueueRoutes from "./dailyQueue.routes.js";
+import drugRoutes from "./drug.routes.js";
+import inWaitingRoutes from "./inWaiting.routes.js";
+import locationRoutes from "./locations.routes.js";
+
 const router = express.Router();
 
 router.get("/health", (req, res) => {
@@ -27,4 +31,7 @@ router.use("/reports", reportRoutes);
 router.use("/daily-queue", dailyQueueRoutes);
 router.use("/auth", authRoutes);
 router.use("/common-treatments",commonTreatmentRouter)
+router.use("/drugs", drugRoutes);
+router.use("/locations", locationRoutes);
+router.use("/in-waiting", inWaitingRoutes);
 export default router;

@@ -29,6 +29,8 @@ const SHEETS = {
     "address",
     "is_allergies",
     "allergies",
+    "location",
+    "distance",
     "created_at",
     "updated_at",
   ],
@@ -58,7 +60,11 @@ const SHEETS = {
     "created_at",
     "updated_at",
   ],
-
+  InWaiting: [
+    "id", //appoinment id
+    "start_time",
+    "end_time",
+  ],
   Appointments: [
     "id",
     "patient_id",
@@ -112,6 +118,8 @@ const SHEETS = {
     "created_at",
     "updated_at",
   ],
+  Drugs: ["id", "name"],
+  Locations: ["id", "location", "distance_km"],
 };
 
 export function ensureDatabase() {

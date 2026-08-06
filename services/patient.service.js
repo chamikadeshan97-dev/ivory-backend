@@ -3,8 +3,17 @@ import { createId, now } from "../utils/helpers.js";
 import appError from "../utils/appError.js";
 
 export function createPatient(data) {
-  const { name, phone, age, gender, address, allergy_details, has_allergies } =
-    data;
+  const {
+    name,
+    phone,
+    age,
+    distance,
+    location,
+    gender,
+    address,
+    allergy_details,
+    has_allergies,
+  } = data;
 
   if (!name || !phone) {
     throw appError("Patient name and phone number are required", 400);
@@ -16,6 +25,8 @@ export function createPatient(data) {
     id: createId("PAT"),
     name,
     phone,
+    location,
+    distance,
     age: age || "",
     gender: gender || "",
     address: address || "",
@@ -120,11 +131,13 @@ export function updatePatient(id, data) {
     ...existingPatient,
     name: data.name ?? existingPatient.name,
     phone: data.phone ?? existingPatient.phone,
+     location : data.location ?? existingPatient.location,
+    distance : data.distance ?? existingPatient.distance,
     age: data.age ?? existingPatient.age,
     gender: data.gender ?? existingPatient.gender,
     address: data.address ?? existingPatient.address,
-    is_allergies:  data.gender ?? is_allergies.gender,
-    allergies:  data.gender ?? allergies.gender,
+    is_allergies: data.gender ?? is_allergies.gender,
+    allergies: data.gender ?? allergies.gender,
     updated_at: now(),
   };
 
@@ -187,8 +200,6 @@ export function getRecentPatients() {
     .slice(0, 5);
 }
 
-
-
 const normalizeValue = (value) => {
   return String(value ?? "").trim();
 };
@@ -208,16 +219,10 @@ const convertToBoolean = (value) => {
     return true;
   }
 
-  return ["true", "yes", "1"].includes(
-    normalizeLower(value),
-  );
+  return ["true", "yes", "1"].includes(normalizeLower(value));
 };
 
-const getPaymentStatus = ({
-  savedStatus,
-  paymentAmount,
-  treatmentCharge,
-}) => {
+const getPaymentStatus = ({ savedStatus, paymentAmount, treatmentCharge }) => {
   const status = normalizeLower(savedStatus);
 
   if (status === "paid" || status === "full") {
@@ -228,10 +233,7 @@ const getPaymentStatus = ({
     return "Partial";
   }
 
-  if (
-    treatmentCharge > 0 &&
-    paymentAmount >= treatmentCharge
-  ) {
+  if (treatmentCharge > 0 && paymentAmount >= treatmentCharge) {
     return "Full";
   }
 
@@ -260,15 +262,11 @@ export function getPatientFullDetails(patientId) {
   -------------------------------------------------------- */
 
   const patient = patients.find(
-    (item) =>
-      normalizeValue(item.id) === requestedPatientId,
+    (item) => normalizeValue(item.id) === requestedPatientId,
   );
 
   if (!patient) {
-    throw appError(
-      `Patient ${requestedPatientId} was not found`,
-      404,
-    );
+    throw appError(`Patient ${requestedPatientId} was not found`, 404);
   }
 
   /* --------------------------------------------------------
@@ -278,42 +276,31 @@ export function getPatientFullDetails(patientId) {
   const patientAppointments = appointments
     .filter(
       (appointment) =>
-        normalizeValue(appointment.patient_id) ===
-        requestedPatientId,
+        normalizeValue(appointment.patient_id) === requestedPatientId,
     )
     .map((appointment) => {
       const dentist = dentists.find(
         (item) =>
-          normalizeValue(item.id) ===
-          normalizeValue(appointment.dentist_id),
+          normalizeValue(item.id) === normalizeValue(appointment.dentist_id),
       );
 
       return {
         appointment_id: appointment.id,
         patient_id: appointment.patient_id,
         dentist_id: appointment.dentist_id,
-        dentist_name:
-          dentist?.name ||
-          dentist?.dentist_name ||
-          "",
+        dentist_name: dentist?.name || dentist?.dentist_name || "",
 
-        appointment_date:
-          appointment.appointment_date || "",
+        appointment_date: appointment.appointment_date || "",
 
-        appointment_time:
-          appointment.appointment_time || "",
+        appointment_time: appointment.appointment_time || "",
 
-        reason_for_visit:
-          appointment.reason_for_visit || "",
+        reason_for_visit: appointment.reason_for_visit || "",
 
-        status:
-          appointment.status || "Pending",
+        status: appointment.status || "Pending",
 
-        created_at:
-          appointment.created_at || "",
+        created_at: appointment.created_at || "",
 
-        updated_at:
-          appointment.updated_at || "",
+        updated_at: appointment.updated_at || "",
       };
     })
     .sort((first, second) => {
@@ -339,13 +326,9 @@ export function getPatientFullDetails(patientId) {
 
   const patientTreatments = treatments
     .filter((treatment) => {
-      const treatmentPatientId = normalizeValue(
-        treatment.patient_id,
-      );
+      const treatmentPatientId = normalizeValue(treatment.patient_id);
 
-      const treatmentAppointmentId = normalizeValue(
-        treatment.appointment_id,
-      );
+      const treatmentAppointmentId = normalizeValue(treatment.appointment_id);
 
       return (
         treatmentPatientId === requestedPatientId ||
@@ -361,12 +344,9 @@ export function getPatientFullDetails(patientId) {
 
       return {
         treatment_id: treatment.id,
-        patient_id:
-          treatment.patient_id ||
-          requestedPatientId,
+        patient_id: treatment.patient_id || requestedPatientId,
 
-        appointment_id:
-          treatment.appointment_id || "",
+        appointment_id: treatment.appointment_id || "",
 
         treatment_performed:
           treatment.treatment_performed ||
@@ -375,8 +355,7 @@ export function getPatientFullDetails(patientId) {
           "",
 
         treatment_fee: toNumber(
-          treatment.treatment_fee ??
-            treatment.treatment_charge,
+          treatment.treatment_fee ?? treatment.treatment_charge,
         ),
 
         treatment_date:
@@ -391,20 +370,15 @@ export function getPatientFullDetails(patientId) {
           treatment.description ||
           "",
 
-        next_appointment_date:
-          treatment.next_appointment_date || "",
+        next_appointment_date: treatment.next_appointment_date || "",
 
-        created_at:
-          treatment.created_at || "",
+        created_at: treatment.created_at || "",
 
-        updated_at:
-          treatment.updated_at || "",
+        updated_at: treatment.updated_at || "",
       };
     })
     .sort((first, second) =>
-      normalizeValue(
-        second.treatment_date,
-      ).localeCompare(
+      normalizeValue(second.treatment_date).localeCompare(
         normalizeValue(first.treatment_date),
       ),
     );
@@ -425,13 +399,9 @@ export function getPatientFullDetails(patientId) {
 
   const patientPayments = payments
     .filter((payment) => {
-      const paymentPatientId = normalizeValue(
-        payment.patient_id,
-      );
+      const paymentPatientId = normalizeValue(payment.patient_id);
 
-      const paymentTreatmentId = normalizeValue(
-        payment.treatment_id,
-      );
+      const paymentTreatmentId = normalizeValue(payment.treatment_id);
 
       return (
         paymentPatientId === requestedPatientId ||
@@ -446,19 +416,13 @@ export function getPatientFullDetails(patientId) {
       );
 
       const treatmentCharge = toNumber(
-        payment.treatment_charge ??
-          treatment?.treatment_fee,
+        payment.treatment_charge ?? treatment?.treatment_fee,
       );
 
-      const paymentAmount = toNumber(
-        payment.payment_amount ??
-          payment.amount,
-      );
+      const paymentAmount = toNumber(payment.payment_amount ?? payment.amount);
 
       const status = getPaymentStatus({
-        savedStatus:
-          payment.status ??
-          payment.payment_status,
+        savedStatus: payment.status ?? payment.payment_status,
 
         paymentAmount,
         treatmentCharge,
@@ -466,46 +430,32 @@ export function getPatientFullDetails(patientId) {
 
       return {
         payment_id: payment.id,
-        patient_id:
-          payment.patient_id ||
-          requestedPatientId,
+        patient_id: payment.patient_id || requestedPatientId,
 
-        treatment_id:
-          payment.treatment_id || "",
+        treatment_id: payment.treatment_id || "",
 
-        treatment_name:
-          treatment?.treatment_performed || "",
+        treatment_name: treatment?.treatment_performed || "",
 
-        receipt_number:
-          payment.receipt_number || "",
+        receipt_number: payment.receipt_number || "",
 
         treatment_charge: treatmentCharge,
         payment_amount: paymentAmount,
 
-        balance: Math.max(
-          treatmentCharge - paymentAmount,
-          0,
-        ),
+        balance: Math.max(treatmentCharge - paymentAmount, 0),
 
-        payment_method:
-          payment.payment_method || "",
+        payment_method: payment.payment_method || "",
 
-        payment_date:
-          payment.payment_date || "",
+        payment_date: payment.payment_date || "",
 
         status,
 
-        created_at:
-          payment.created_at || "",
+        created_at: payment.created_at || "",
 
-        updated_at:
-          payment.updated_at || "",
+        updated_at: payment.updated_at || "",
       };
     })
     .sort((first, second) =>
-      normalizeValue(
-        second.payment_date,
-      ).localeCompare(
+      normalizeValue(second.payment_date).localeCompare(
         normalizeValue(first.payment_date),
       ),
     );
@@ -514,110 +464,62 @@ export function getPatientFullDetails(patientId) {
      Financial summary
   -------------------------------------------------------- */
 
-  const totalTreatmentCharges =
-    patientTreatments.reduce(
-      (total, treatment) =>
-        total +
-        toNumber(treatment.treatment_fee),
-      0,
-    );
-
-  const totalPaid = patientPayments.reduce(
-    (total, payment) =>
-      total +
-      toNumber(payment.payment_amount),
+  const totalTreatmentCharges = patientTreatments.reduce(
+    (total, treatment) => total + toNumber(treatment.treatment_fee),
     0,
   );
 
-  const fullPaymentCount =
-    patientPayments.filter(
-      (payment) => payment.status === "Full",
-    ).length;
+  const totalPaid = patientPayments.reduce(
+    (total, payment) => total + toNumber(payment.payment_amount),
+    0,
+  );
 
-  const partialPaymentCount =
-    patientPayments.filter(
-      (payment) => payment.status === "Partial",
-    ).length;
+  const fullPaymentCount = patientPayments.filter(
+    (payment) => payment.status === "Full",
+  ).length;
+
+  const partialPaymentCount = patientPayments.filter(
+    (payment) => payment.status === "Partial",
+  ).length;
 
   const totalCash = patientPayments
-    .filter(
-      (payment) =>
-        normalizeLower(payment.payment_method) ===
-        "cash",
-    )
-    .reduce(
-      (total, payment) =>
-        total +
-        toNumber(payment.payment_amount),
-      0,
-    );
+    .filter((payment) => normalizeLower(payment.payment_method) === "cash")
+    .reduce((total, payment) => total + toNumber(payment.payment_amount), 0);
 
   const totalCard = patientPayments
-    .filter(
-      (payment) =>
-        normalizeLower(payment.payment_method) ===
-        "card",
-    )
-    .reduce(
-      (total, payment) =>
-        total +
-        toNumber(payment.payment_amount),
-      0,
-    );
+    .filter((payment) => normalizeLower(payment.payment_method) === "card")
+    .reduce((total, payment) => total + toNumber(payment.payment_amount), 0);
 
   const totalTransfer = patientPayments
-    .filter(
-      (payment) =>
-        normalizeLower(payment.payment_method) ===
-        "transfer",
-    )
-    .reduce(
-      (total, payment) =>
-        total +
-        toNumber(payment.payment_amount),
-      0,
-    );
+    .filter((payment) => normalizeLower(payment.payment_method) === "transfer")
+    .reduce((total, payment) => total + toNumber(payment.payment_amount), 0);
 
   /* --------------------------------------------------------
      Appointment summary
   -------------------------------------------------------- */
 
-  const today = new Date()
-    .toISOString()
-    .slice(0, 10);
+  const today = new Date().toISOString().slice(0, 10);
 
-  const upcomingAppointments =
-    patientAppointments
-      .filter(
-        (appointment) =>
-          normalizeValue(
-            appointment.appointment_date,
-          ) >= today &&
-          normalizeLower(appointment.status) !==
-            "cancelled" &&
-          normalizeLower(appointment.status) !==
-            "completed",
-      )
-      .sort((first, second) =>
-        `${first.appointment_date} ${first.appointment_time}`.localeCompare(
-          `${second.appointment_date} ${second.appointment_time}`,
-        ),
-      );
-
-  const completedAppointments =
-    patientAppointments.filter(
+  const upcomingAppointments = patientAppointments
+    .filter(
       (appointment) =>
-        ["completed", "paid"].includes(
-          normalizeLower(appointment.status),
-        ),
+        normalizeValue(appointment.appointment_date) >= today &&
+        normalizeLower(appointment.status) !== "cancelled" &&
+        normalizeLower(appointment.status) !== "completed",
+    )
+    .sort((first, second) =>
+      `${first.appointment_date} ${first.appointment_time}`.localeCompare(
+        `${second.appointment_date} ${second.appointment_time}`,
+      ),
     );
 
-  const cancelledAppointments =
-    patientAppointments.filter(
-      (appointment) =>
-        normalizeLower(appointment.status) ===
-        "cancelled",
-    );
+  const completedAppointments = patientAppointments.filter((appointment) =>
+    ["completed", "paid"].includes(normalizeLower(appointment.status)),
+  );
+
+  const cancelledAppointments = patientAppointments.filter(
+    (appointment) => normalizeLower(appointment.status) === "cancelled",
+  );
 
   /* --------------------------------------------------------
      Final response
@@ -627,76 +529,50 @@ export function getPatientFullDetails(patientId) {
     patient: {
       ...patient,
 
-      id:
-        patient.id ||
-        requestedPatientId,
+      id: patient.id || requestedPatientId,
 
-      name:
-        patient.name ||
-        patient.patient_name ||
-        "",
+      name: patient.name || patient.patient_name || "",
 
-      phone:
-        patient.phone ||
-        patient.phone_number ||
-        "",
+      phone: patient.phone || patient.phone_number || "",
 
       has_allergies: convertToBoolean(
-        patient.has_allergies ??
-          patient.is_allergies,
+        patient.has_allergies ?? patient.is_allergies,
       ),
 
-      allergy_details:
-        patient.allergy_details ??
-        patient.allergies ??
-        "",
+      allergy_details: patient.allergy_details ?? patient.allergies ?? "",
     },
 
     summary: {
-      total_appointments:
-        patientAppointments.length,
+      total_appointments: patientAppointments.length,
 
-      completed_appointments:
-        completedAppointments.length,
+      completed_appointments: completedAppointments.length,
 
-      cancelled_appointments:
-        cancelledAppointments.length,
+      cancelled_appointments: cancelledAppointments.length,
 
-      upcoming_appointments:
-        upcomingAppointments.length,
+      upcoming_appointments: upcomingAppointments.length,
 
-      total_treatments:
-        patientTreatments.length,
+      total_treatments: patientTreatments.length,
 
-      total_payments:
-        patientPayments.length,
+      total_payments: patientPayments.length,
 
-      full_payments:
-        fullPaymentCount,
+      full_payments: fullPaymentCount,
 
-      partial_payments:
-        partialPaymentCount,
+      partial_payments: partialPaymentCount,
 
-      total_treatment_charges:
-        totalTreatmentCharges,
+      total_treatment_charges: totalTreatmentCharges,
 
       total_paid: totalPaid,
 
-      outstanding_balance: Math.max(
-        totalTreatmentCharges - totalPaid,
-        0,
-      ),
+      outstanding_balance: Math.max(totalTreatmentCharges - totalPaid, 0),
 
       total_cash: totalCash,
       total_card: totalCard,
       total_transfer: totalTransfer,
     },
 
-    next_appointment:
-      upcomingAppointments[0] || null,
+    next_appointment: upcomingAppointments[0] || null,
 
-    last_appointment:
-      patientAppointments[0] || null,
+    last_appointment: patientAppointments[0] || null,
 
     appointments: patientAppointments,
     treatments: patientTreatments,

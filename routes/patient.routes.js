@@ -1,5 +1,7 @@
 import express from "express";
-import patientController, { getPatientFullDetailsController } from "../controllers/patient.controller.js";
+import patientController, {
+  getPatientFullDetailsController,
+} from "../controllers/patient.controller.js";
 
 const router = express.Router();
 
@@ -14,11 +16,7 @@ router.get("/recent", patientController.getRecentPatients);
 router.get("/:id/history", patientController.getPatientHistory);
 router.get("/:id", patientController.getPatientById);
 
-router.get(
-  "/:patientId/full-details",
-  getPatientFullDetailsController,
-);
-
+router.get("/:patientId/full-details", getPatientFullDetailsController);
 
 // Update
 router.put("/:id", patientController.updatePatient);

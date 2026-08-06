@@ -46,7 +46,10 @@ export const updateAppointmentStatusController = (req, res, next) => {
     const { id } = req.params;
     const { status } = req.body;
 
-    const updatedAppointment = appointmentService.updateAppointmentStatus(id, status);
+    const updatedAppointment = appointmentService.updateAppointmentStatus(
+      id,
+      status,
+    );
 
     res.status(200).json({
       success: true,
@@ -181,9 +184,9 @@ const getAppointmentFullDetails = async (req, res) => {
 
 const getAppointmentByTreatmentId = async (req, res) => {
   try {
-      const { treatmentId } = req.params;
-      console.log(treatmentId);
-      
+    const { treatmentId } = req.params;
+    console.log(treatmentId);
+
     const result = await appointmentService.getAppointmentByTreatmentId({
       treatmentId,
     });
