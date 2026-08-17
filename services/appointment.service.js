@@ -1,10 +1,305 @@
+import appError from "../utils/appError.js";
 import {
   readSheet,
   writeSheet,
 } from "../utils/googleSheets.js";
 
-import appError from "../utils/appError.js";
+const APPOINTMENTS_SHEET = "Appointments";
 
+/* ========================================================
+   Helpers
+======================================================== */
+
+const normalizeText = (value) => {
+  return String(value ?? "").trim();
+};
+
+
+/* ========================================================
+   Reassign / Swap Appointment Number
+======================================================== */
+
+export const reassignAppointmentNumberService = async (
+  sourceAppointmentId,
+  targetAppointmentId,
+) => {
+  const sourceId = normalizeText(sourceAppointmentId);
+  const targetId = normalizeText(targetAppointmentId);
+
+  if (!sourceId) {
+    throw appError("Source appointment ID is required", 400);
+  }
+
+  if (!targetId) {
+    throw appError("Target appointment ID is required", 400);
+  }
+
+  if (normalizeId(sourceId) === normalizeId(targetId)) {
+    throw appError(
+      "Source and target appointments cannot be the same",
+      400,
+    );
+  }
+
+  /* ========================================================
+     Read appointments
+  ======================================================== */
+
+  const appointments = await readSheet(APPOINTMENTS_SHEET);
+
+  if (!Array.isArray(appointments)) {
+    throw appError("Failed to load appointments", 500);
+  }
+
+  /* ========================================================
+     Find source appointment
+  ======================================================== */
+
+  const sourceIndex = appointments.findIndex((appointment) => {
+    const appointmentId =
+      appointment?.appointment_id ??
+      appointment?.id;
+
+    return normalizeId(appointmentId) === normalizeId(sourceId);
+  });
+
+  if (sourceIndex === -1) {
+    throw appError("Source appointment not found", 404);
+  }
+
+  /* ========================================================
+     Find target appointment
+  ======================================================== */
+
+  const targetIndex = appointments.findIndex((appointment) => {
+    const appointmentId =
+      appointment?.appointment_id ??
+      appointment?.id;
+
+    return normalizeId(appointmentId) === normalizeId(targetId);
+  });
+
+  if (targetIndex === -1) {
+    throw appError("Target appointment not found", 404);
+  }
+
+  const sourceAppointment = appointments[sourceIndex];
+  const targetAppointment = appointments[targetIndex];
+
+  /* ========================================================
+     Validate source is cancelled
+  ======================================================== */
+
+  const sourceStatus = normalizeText(
+    sourceAppointment?.status,
+  ).toLowerCase();
+
+  if (
+    sourceStatus !== "cancelled" &&
+    sourceStatus !== "canceled"
+  ) {
+    throw appError(
+      "Only a cancelled appointment number can be reassigned",
+      400,
+    );
+  }
+
+  /* ========================================================
+     Validate target status
+  ======================================================== */
+
+  const targetStatus = normalizeText(
+    targetAppointment?.status,
+  ).toLowerCase();
+
+  const allowedTargetStatuses = [
+    "pending",
+    "confirmed",
+    "checked in",
+  ];
+
+  if (!allowedTargetStatuses.includes(targetStatus)) {
+    throw appError(
+      "The selected appointment cannot receive this appointment number",
+      400,
+    );
+  }
+
+  /* ========================================================
+     Validate same appointment date
+  ======================================================== */
+
+  const sourceDate = normalizeText(
+    sourceAppointment?.appointment_date,
+  );
+
+  const targetDate = normalizeText(
+    targetAppointment?.appointment_date,
+  );
+
+  if (!sourceDate || !targetDate) {
+    throw appError(
+      "Both appointments must have an appointment date",
+      400,
+    );
+  }
+
+  if (sourceDate !== targetDate) {
+    throw appError(
+      "Appointment numbers can only be reassigned on the same date",
+      400,
+    );
+  }
+
+  /* ========================================================
+     Get cancelled appointment number
+  ======================================================== */
+
+  const sourceAppointmentNumber =
+    sourceAppointment?.appointment_number ??
+    sourceAppointment?.queue_number ??
+    sourceAppointment?.number;
+
+  if (
+    sourceAppointmentNumber === undefined ||
+    sourceAppointmentNumber === null ||
+    sourceAppointmentNumber === ""
+  ) {
+    throw appError(
+      "Cancelled appointment does not have an appointment number",
+      400,
+    );
+  }
+
+  const targetOldAppointmentNumber =
+    targetAppointment?.appointment_number ??
+    targetAppointment?.queue_number ??
+    targetAppointment?.number ??
+    "";
+
+  /* ========================================================
+     Make sure another active appointment is not already
+     using the cancelled appointment number
+  ======================================================== */
+
+  const numberAlreadyUsed = appointments.some(
+    (appointment, index) => {
+      if (
+        index === sourceIndex ||
+        index === targetIndex
+      ) {
+        return false;
+      }
+
+      const appointmentDate = normalizeText(
+        appointment?.appointment_date,
+      );
+
+      if (appointmentDate !== sourceDate) {
+        return false;
+      }
+
+      const status = normalizeText(
+        appointment?.status,
+      ).toLowerCase();
+
+      if (
+        status === "cancelled" ||
+        status === "canceled"
+      ) {
+        return false;
+      }
+
+      const appointmentNumber =
+        appointment?.appointment_number ??
+        appointment?.queue_number ??
+        appointment?.number;
+
+      return (
+        String(appointmentNumber) ===
+        String(sourceAppointmentNumber)
+      );
+    },
+  );
+
+  if (numberAlreadyUsed) {
+    throw appError(
+      `Appointment number ${sourceAppointmentNumber} is already being used`,
+      409,
+    );
+  }
+
+  /* ========================================================
+     Reassign appointment number
+
+     Example:
+
+     Cancelled:
+       PAT_d9351296 -> #2
+
+     Target:
+       P0002 -> #6
+
+     Result:
+       PAT_d9351296 -> no number
+       P0002 -> #2
+  ======================================================== */
+
+  const now = new Date().toISOString();
+
+  appointments[sourceIndex] = {
+    ...sourceAppointment,
+
+    appointment_number: "",
+
+    updated_at: now,
+  };
+
+  appointments[targetIndex] = {
+    ...targetAppointment,
+
+    appointment_number: sourceAppointmentNumber,
+
+    updated_at: now,
+  };
+
+  /* ========================================================
+     Save appointments
+  ======================================================== */
+
+  await writeSheet(
+    APPOINTMENTS_SHEET,
+    appointments,
+  );
+
+  /* ========================================================
+     Response
+  ======================================================== */
+
+  return {
+    message: `Appointment number ${sourceAppointmentNumber} reassigned successfully`,
+
+    releasedAppointment: appointments[sourceIndex],
+
+    reassignedAppointment: appointments[targetIndex],
+
+    reassignment: {
+      appointmentNumber: sourceAppointmentNumber,
+
+      sourceAppointmentId:
+        sourceAppointment?.appointment_id ??
+        sourceAppointment?.id,
+
+      targetAppointmentId:
+        targetAppointment?.appointment_id ??
+        targetAppointment?.id,
+
+      targetOldAppointmentNumber,
+      targetNewAppointmentNumber:
+        sourceAppointmentNumber,
+    },
+  };
+};
 /* ========================================================
    Constants
 ======================================================== */
@@ -79,9 +374,7 @@ function normalizeId(value) {
   return String(value ?? "").trim();
 }
 
-function normalizeText(value) {
-  return String(value ?? "").trim();
-}
+
 
 function toNumber(value, fallback = 0) {
   const numberValue = Number(value);
@@ -637,18 +930,8 @@ export async function updateAppointmentStatus(
       currentStatus
     ];
 
-  if (
-    currentStatus !== normalizedStatus &&
-    Array.isArray(allowedStatuses) &&
-    !allowedStatuses.includes(
-      normalizedStatus,
-    )
-  ) {
-    throw appError(
-      `Cannot change appointment status from ${currentStatus} to ${normalizedStatus}`,
-      400,
-    );
-  }
+
+    
 
   /*
    * Only one patient may be in treatment

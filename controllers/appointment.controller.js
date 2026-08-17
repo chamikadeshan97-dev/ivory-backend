@@ -353,5 +353,52 @@ export default {
   getAppointmentsByDateRange,
   getAppointmentFullDetails,
   updateAppointmentStatusController,
-  updateAppointment,
+  updateAppointment,reassignAppointmentNumber,
+};
+/* ========================================================
+   Reassign Appointment Number
+======================================================== */
+
+async function reassignAppointmentNumber(
+  req,
+  res,
+  next,
+) {
+  try {
+    const { appointmentId } = req.params;
+
+    const {
+      target_appointment_id,
+    } = req.body;
+
+    if (!appointmentId) {
+      return res.status(400).json({
+        success: false,
+        message: "Source appointment ID is required",
+      });
+    }
+
+    if (!target_appointment_id) {
+      return res.status(400).json({
+        success: false,
+        message: "Target appointment ID is required",
+      });
+    }
+
+    const result =
+      await appointmentService.reassignAppointmentNumberService(
+        appointmentId,
+        target_appointment_id,
+      );
+
+    return res.status(200).json({
+      success: true,
+
+      message: "Appointment number reassigned successfully",
+
+      data: result,
+    });
+  } catch (error) {
+    next(error);
+  }
 };

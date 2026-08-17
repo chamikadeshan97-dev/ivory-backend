@@ -17,7 +17,10 @@ router.get(
   "/:appointmentId/full-details",
   appointmentController.getAppointmentFullDetails,
 );
-router.get( "/treatment/:treatmentId", appointmentController.getAppointmentByTreatmentId); //->TRT_90000b36
+router.get(
+  "/treatment/:treatmentId",
+  appointmentController.getAppointmentByTreatmentId,
+); //->TRT_90000b36
 // Status update
 router.patch(
   "/:id/status",
@@ -26,5 +29,8 @@ router.patch(
 
 // Full update
 router.patch("/:id", appointmentController.updateAppointment);
-
+router.patch(
+  "/:appointmentId/reassign-number",
+  appointmentController.reassignAppointmentNumber,
+);
 export default router;
