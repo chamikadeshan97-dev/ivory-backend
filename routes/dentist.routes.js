@@ -6,6 +6,11 @@ const router = express.Router();
 // Create
 router.post("/", dentistController.createDentist);
 
+// Doctor arrival
+router.get("/arrival/:date", dentistController.getDoctorArrivalStatus);
+
+router.post("/arrival", dentistController.markDoctorArrived);
+
 // Read
 router.get("/", dentistController.getAllDentists);
 router.get("/search", dentistController.searchDentists);

@@ -13,7 +13,7 @@ import drugRoutes from "./drug.routes.js";
 import inWaitingRoutes from "./inWaiting.routes.js";
 import locationRoutes from "./locations.routes.js";
 import databaseRoutes from "./database.routes.js";
-
+import queueOrderRoutes from "./queueOrder.routes.js";
 const router = express.Router();
 
 router.get("/health", (req, res) => {
@@ -36,4 +36,5 @@ router.use("/drugs", drugRoutes);
 router.use("/locations", locationRoutes);
 router.use("/in-waiting", inWaitingRoutes);
 router.use("/database", databaseRoutes);
+router.use("/queue-order", queueOrderRoutes);
 export default router;

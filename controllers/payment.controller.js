@@ -2,15 +2,6 @@ import * as paymentService from "../services/payment.service.js";
 
 import sendError from "../utils/sendError.js";
 
-/*
-|--------------------------------------------------------------------------
-| Create Payment
-|--------------------------------------------------------------------------
-|
-| POST /api/payments
-|
-*/
-
 async function createPayment(req, res) {
   try {
     const payment =

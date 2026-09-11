@@ -1,6 +1,85 @@
 import * as dentistService from "../services/dentist.service.js";
 import sendError from "../utils/sendError.js";
 
+async function getDoctorArrivalStatus   (req, res)  {
+  try {
+    const { date } = req.params;
+console.log(req.params);
+console.log(date);
+console.log(req.params);
+console.log(req.params);
+console.log(date);
+
+    if (!date) {
+      return res.status(400).json({
+        success: false,
+        message: "Date is required",
+      });
+    }
+
+    const result = await dentistService.getDoctorArrivalStatus(date);
+
+    return res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    console.error("Failed to get doctor arrival status:", error);
+
+    return res.status(500).json({
+      success: false,
+      message:
+        error?.message || "Failed to get doctor arrival status",
+    });
+  }
+};
+async function markDoctorArrived   (req, res)  {
+  try {
+    const { date, send_sms = true } = req.body;
+
+    if (!date) {
+      return res.status(400).json({
+        success: false,
+        message: "Date is required",
+      });
+    }
+
+    const result = await dentistService.markDoctorArrived({
+      date,
+      sendSms: send_sms,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Doctor arrival recorded successfully",
+      data: result,
+    });
+  } catch (error) {
+    console.error("Failed to mark doctor arrival:", error);
+
+    return res.status(500).json({
+      success: false,
+      message:
+        error?.message || "Failed to mark doctor arrival",
+    });
+  }
+};
+
+const dentistController = {
+  createDentist,
+  getAllDentists,
+  searchDentists,
+  getDentistStatistics,
+  getDentistById,
+  updateDentist,
+  deleteDentist,
+
+  // NEW
+  getDoctorArrivalStatus,
+  markDoctorArrived,
+};
+
+
 /* --------------------------------------------------------
    Create dentist
 -------------------------------------------------------- */
@@ -180,5 +259,5 @@ export default {
   getDentistById,
   updateDentist,
   deleteDentist,
-  getDentistStatistics,
+  getDentistStatistics,getDoctorArrivalStatus,markDoctorArrived
 };

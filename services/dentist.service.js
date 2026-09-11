@@ -11,10 +11,30 @@ import {
 import appError from "../utils/appError.js";
 
 const SHEET_NAME = "Dentists";
+const DOCTOR_ARRIVAL_SHEET = "Doctor_Arrival";
 
 /* --------------------------------------------------------
    Helpers
 -------------------------------------------------------- */
+const normalizeDate = (value) => {
+  if (!value) {
+    return "";
+  }
+
+  return String(value).trim();
+};
+
+const normalizeBoolean = (value) => {
+  if (value === true || value === 1) {
+    return true;
+  }
+
+  return ["true", "1", "yes"].includes(
+    String(value ?? "")
+      .trim()
+      .toLowerCase(),
+  );
+};
 
 function normalizeText(value) {
   return String(value ?? "").trim();
@@ -520,4 +540,163 @@ export async function getDentistStatistics() {
       specializationCounts,
   };
 }
+export async function getDoctorArrivalStatus(date) {
+
+  const normalizedDate = normalizeDate(date);
+
+  if (!normalizedDate) {
+    throw new Error("Date is required");
+  }
+
+  const records = await readSheet(DOCTOR_ARRIVAL_SHEET);
+
+  const arrivalRecord = records.find(
+    (record) => normalizeDate(record.date) === normalizedDate,
+  );
+
+  if (!arrivalRecord) {
+    return {
+      date: normalizedDate,
+      arrived: false,
+      arrived_at: null,
+      sms_sent: false,
+      sms_count: 0,
+    };
+  }
+
+  return {
+    id: arrivalRecord.id || "",
+    date: arrivalRecord.date || normalizedDate,
+
+    arrived: normalizeBoolean(arrivalRecord.arrived),
+
+    arrived_at:
+      arrivalRecord.arrived_at ||
+      arrivalRecord.arrival_time ||
+      null,
+
+    sms_sent: normalizeBoolean(arrivalRecord.sms_sent),
+
+    sms_count: Number(arrivalRecord.sms_count || 0),
+  };
+};
+
+
+export async function markDoctorArrived({
+  date,
+  sendSms = true,
+}) {
+  const normalizedDate = normalizeDate(date);
+
+  if (!normalizedDate) {
+    throw new Error("Date is required");
+  }
+
+  const records = await readSheet(DOCTOR_ARRIVAL_SHEET);
+
+  /*
+   * Prevent duplicate doctor-arrival records
+   * and especially duplicate SMS sending.
+   */
+  const existingRecordIndex = records.findIndex(
+    (record) => normalizeDate(record.date) === normalizedDate,
+  );
+
+  if (existingRecordIndex !== -1) {
+    const existingRecord = records[existingRecordIndex];
+
+    if (normalizeBoolean(existingRecord.arrived)) {
+      return {
+        id: existingRecord.id || "",
+        date: existingRecord.date || normalizedDate,
+        arrived: true,
+        arrived_at:
+          existingRecord.arrived_at ||
+          existingRecord.arrival_time ||
+          null,
+        sms_sent: normalizeBoolean(existingRecord.sms_sent),
+        sms_count: Number(existingRecord.sms_count || 0),
+        already_arrived: true,
+      };
+    }
+  }
+
+  const now = new Date().toISOString();
+
+  const id = `DAR_${normalizedDate.replaceAll("-", "")}`;
+
+  /*
+   * ======================================================
+   * SMS
+   * ======================================================
+   *
+   * For now smsCount is 0.
+   *
+   * Plug your SMS sending service into this section.
+   */
+  let smsCount = 0;
+  let smsSent = false;
+
+  if (sendSms) {
+    try {
+      /*
+       * Example:
+       *
+       * const smsResult = await sendDoctorArrivalSms(normalizedDate);
+       *
+       * smsCount = smsResult.sentCount;
+       * smsSent = smsCount > 0;
+       */
+
+      smsCount = 0;
+      smsSent = false;
+    } catch (error) {
+      console.error(
+        "Failed to send doctor arrival SMS:",
+        error,
+      );
+
+      /*
+       * I recommend NOT failing doctor arrival just because
+       * the SMS provider failed.
+       */
+      smsCount = 0;
+      smsSent = false;
+    }
+  }
+
+  const newRecord = {
+    id,
+    date: normalizedDate,
+    arrived: true,
+    arrived_at: now,
+    sms_sent: smsSent,
+    sms_count: smsCount,
+    created_at: now,
+    updated_at: now,
+  };
+
+  /*
+   * Existing row for this date:
+   * update it instead of creating duplicate date rows.
+   */
+  if (existingRecordIndex !== -1) {
+    records[existingRecordIndex] = {
+      ...records[existingRecordIndex],
+      ...newRecord,
+
+      created_at:
+        records[existingRecordIndex].created_at || now,
+    };
+  } else {
+    records.push(newRecord);
+  }
+
+  await writeSheet(DOCTOR_ARRIVAL_SHEET, records);
+
+  return {
+    ...newRecord,
+    already_arrived: false,
+  };
+};
 
