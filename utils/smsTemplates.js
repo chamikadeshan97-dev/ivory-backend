@@ -17,24 +17,17 @@ const formatSmsDate = (date) => {
 };
 
 export const appointmentDetailsSMS = ({
-  patientName,
   date,
   appointmentNumber,
-  reason,
 }) => {
-  const firstName = getFirstName(patientName);
-  const smsDate = formatSmsDate(date);
-  const reasonText = String(reason || "")
-    .toLowerCase()
-    .includes("see")
-    ? "To Check"
-    : reason || "N/A";
+  const smsDate = dayjs(date).format("DD.MM.YYYY");
+
+  const formattedNumber = String(appointmentNumber || "").padStart(2, "0");
+
   return (
-    `Dear Sir/Madam,\n\n` +
-    `Your appointment details\n` +
-    `Date - ${smsDate}\n` +
-    `Number - #${appointmentNumber}\n\n` +
- `Contact: +94 71 144 9999\n` +
+    `Dear Sir/Madam,\n` +
+    `Your tentative appointment for Dr Bandu Ukwattage at Ivory Dental on ${smsDate} appt no ${formattedNumber}.\n` +
+    `Thanking you for choosing Ivory Dental.\n` +
     `- Ivory Dental -`
   );
 };
@@ -42,12 +35,11 @@ export const appointmentDetailsSMS = ({
 /**
  * Doctor Arrival SMS
  */
-export const doctorArrivalSMS = ({ patientName }) => {
+export const doctorArrivalSMS = () => {
   return (
-    `Dear Sir/Madam,\n\n` +
-    `Doctor has arrived.\n` +
-    `Please stay at the clinic.\n\n` +
-     `Contact: +94 71 144 9999\n` +
+    `Dear Sir/Madam,\n` +
+    `Dr Bandu Ukwattage has arrived. Please proceed to the dental clinic according to your allocated number.\n` +
+    `Thank You.\n` +
     `- Ivory Dental -`
   );
 };
