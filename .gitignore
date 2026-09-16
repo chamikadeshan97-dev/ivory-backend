@@ -25,3 +25,7 @@ dist-ssr
 .env
 sad
 sad.json
+
+.env
+credentials.json
+drive-token.json

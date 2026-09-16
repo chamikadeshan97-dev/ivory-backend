@@ -1,10 +1,11 @@
+import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import "dotenv/config";
+
 import apiRoutes from "./routes/index.js";
 import { ensureDatabase } from "./utils/excelDb.js";
-
+import smsRoutes from "./routes/sms.routes.js";
 dotenv.config();
 
 const app = express();
@@ -28,7 +29,10 @@ app.get("/", (req, res) => {
 });
 
 app.use("/api", apiRoutes);
-
+app.use(
+  "/api/sms",
+  smsRoutes
+);
 app.use((req, res) => {
   res.status(404).json({
     success: false,

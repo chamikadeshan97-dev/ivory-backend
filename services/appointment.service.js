@@ -674,7 +674,8 @@ export async function createAppointment(data) {
       );
     });
 
-  if (duplicateAppointment) {
+  if (duplicateAppointment && !data.is_skipped
+  ) {
     throw appError(
       "This patient already has an appointment at the selected date and time",
       409,

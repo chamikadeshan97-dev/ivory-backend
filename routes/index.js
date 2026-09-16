@@ -14,6 +14,7 @@ import inWaitingRoutes from "./inWaiting.routes.js";
 import locationRoutes from "./locations.routes.js";
 import databaseRoutes from "./database.routes.js";
 import queueOrderRoutes from "./queueOrder.routes.js";
+import patientMediaRoutes from "./patientMedia.routes.js";
 const router = express.Router();
 
 router.get("/health", (req, res) => {
@@ -37,4 +38,5 @@ router.use("/locations", locationRoutes);
 router.use("/in-waiting", inWaitingRoutes);
 router.use("/database", databaseRoutes);
 router.use("/queue-order", queueOrderRoutes);
+router.use("/patient-media", patientMediaRoutes);
 export default router;
