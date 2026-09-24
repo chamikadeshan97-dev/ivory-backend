@@ -15,6 +15,7 @@ import locationRoutes from "./locations.routes.js";
 import databaseRoutes from "./database.routes.js";
 import queueOrderRoutes from "./queueOrder.routes.js";
 import patientMediaRoutes from "./patientMedia.routes.js";
+import displayMusicRoutes from "./displayMusic.router.js";
 
 import orthoRoutes from "./ortho.router.js";
 const router = express.Router();
@@ -42,4 +43,5 @@ router.use("/database", databaseRoutes);
 router.use("/queue-order", queueOrderRoutes);
 router.use("/patient-media", patientMediaRoutes);
 router.use("/ortho",orthoRoutes);
+router.use("/display-music",displayMusicRoutes);
 export default router;
