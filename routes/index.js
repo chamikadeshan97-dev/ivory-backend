@@ -16,8 +16,8 @@ import databaseRoutes from "./database.routes.js";
 import queueOrderRoutes from "./queueOrder.routes.js";
 import patientMediaRoutes from "./patientMedia.routes.js";
 import displayMusicRoutes from "./displayMusic.router.js";
-
 import orthoRoutes from "./ortho.router.js";
+import { activityLogger } from "../middleware/activityLogger.middleware.js";
 const router = express.Router();
 
 router.get("/health", (req, res) => {
@@ -27,6 +27,7 @@ router.get("/health", (req, res) => {
   });
 });
 
+router.use(activityLogger);
 router.use("/patients", patientRoutes);
 router.use("/dentists", dentistRoutes);
 router.use("/appointments", appointmentRoutes);
@@ -35,13 +36,14 @@ router.use("/payments", paymentRoutes);
 router.use("/reports", reportRoutes);
 router.use("/daily-queue", dailyQueueRoutes);
 router.use("/auth", authRoutes);
-router.use("/common-treatments",commonTreatmentRouter)
+router.use("/common-treatments", commonTreatmentRouter);
 router.use("/drugs", drugRoutes);
 router.use("/locations", locationRoutes);
 router.use("/in-waiting", inWaitingRoutes);
 router.use("/database", databaseRoutes);
 router.use("/queue-order", queueOrderRoutes);
 router.use("/patient-media", patientMediaRoutes);
-router.use("/ortho",orthoRoutes);
-router.use("/display-music",displayMusicRoutes);
+router.use("/ortho", orthoRoutes);
+router.use("/display-music", displayMusicRoutes);
+
 export default router;

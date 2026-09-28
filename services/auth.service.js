@@ -75,6 +75,16 @@ const sanitizeUser = (user) => {
     phone: user.phone,
     role: user.role,
     status: user.status,
+
+    // Permissions from Google Sheet
+    queue_manager: user.queue_manager,
+    appointment_history: user.appointment_history,
+    doctor_treatment: user.doctor_treatment,
+    payment_history: user.payment_history,
+    common_treatments: user.common_treatments,
+    drugs: user.drugs,
+    locations: user.locations,
+
     created_at: user.created_at,
     updated_at: user.updated_at,
   };
