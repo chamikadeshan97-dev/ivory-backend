@@ -38,7 +38,7 @@ export const appointmentDetailsSMS = ({
 export const doctorArrivalSMS = () => {
   return (
     `Dear Sir/Madam,\n` +
-    `Dr Bandu Ukwattage has arrived. Please proceed to the dental clinic according to your allocated number.\n` +
+    `Dr Bandu Ukwatta has arrived. Please proceed to the dental clinic according to your allocated number.\n` +
     `Thank You.\n` +
     `- Ivory Dental -`
   );
