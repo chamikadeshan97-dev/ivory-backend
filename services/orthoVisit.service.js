@@ -229,3 +229,75 @@ export const deleteOrthoVisitService = async (
 
   return deleted;
 };
+
+/* ========================================================
+   PERMANENTLY DELETE ALL VISITS BY ORTHO CASE
+======================================================== */
+
+export const deleteOrthoVisitsByCaseService = async (caseId) => {
+  /* ----------------------------------------------------
+     VALIDATE CASE ID
+  ---------------------------------------------------- */
+
+  const normalizedCaseId = normalize(caseId);
+
+  if (!normalizedCaseId) {
+    throw new Error("Ortho case ID is required");
+  }
+
+  /* ----------------------------------------------------
+     READ ALL VISITS
+  ---------------------------------------------------- */
+
+  const visits = (await readSheet(VISITS_SHEET)) || [];
+
+  /* ----------------------------------------------------
+     FIND RELATED VISITS
+  ---------------------------------------------------- */
+
+  const relatedVisits = visits.filter(
+    (row) =>
+      normalize(row.ortho_case_id) === normalizedCaseId
+  );
+
+  /* ----------------------------------------------------
+     NO VISITS FOUND
+  ---------------------------------------------------- */
+
+  if (relatedVisits.length === 0) {
+    return {
+      case_id: caseId,
+      deleted_count: 0,
+      deleted_visit_ids: [],
+    };
+  }
+
+  /* ----------------------------------------------------
+     REMOVE RELATED VISITS
+  ---------------------------------------------------- */
+
+  const remainingVisits = visits.filter(
+    (row) =>
+      normalize(row.ortho_case_id) !== normalizedCaseId
+  );
+
+  /* ----------------------------------------------------
+     UPDATE GOOGLE SHEET
+  ---------------------------------------------------- */
+
+  await writeSheet(VISITS_SHEET, remainingVisits);
+
+  /* ----------------------------------------------------
+     RETURN RESULT
+  ---------------------------------------------------- */
+
+  return {
+    case_id: caseId,
+
+    deleted_count: relatedVisits.length,
+
+    deleted_visit_ids: relatedVisits.map(
+      (row) => row.ortho_visit_id
+    ),
+  };
+};

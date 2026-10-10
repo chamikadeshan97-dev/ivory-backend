@@ -69,10 +69,7 @@ const executeWithRetry = async (operation, maxRetries = 4) => {
         32_000,
       );
 
-      console.warn(
-        `Google Sheets request failed with ${status}. ` +
-          `Retrying after ${retryDelay}ms...`,
-      );
+    
 
       await sleep(retryDelay);
     }
@@ -250,57 +247,315 @@ export const readSheets = async (
    Write complete sheet
 ------------------------------------------------------- */
 
+
+/* -------------------------------------------------------
+   Write complete sheet
+   - Preserve existing headers
+   - Include fields from every record
+   - Update before clearing leftover rows
+   - Invalidate cache after changes
+------------------------------------------------------- */
+
+
+/* -------------------------------------------------------
+   Write complete sheet
+
+   - Preserve existing column positions
+   - Include fields from every record
+   - Write and clear in one batchUpdate
+   - Automatically expand sheet dimensions
+   - Keep existing function signature
+   - Clear cache after successful writes
+
+   IMPORTANT:
+   This does not provide concurrent-write
+   protection across separate processes.
+------------------------------------------------------- */
+
 export const writeSheet = async (sheetName, records) => {
   if (!spreadsheetId) {
-    throw new Error("GOOGLE_SHEET_ID is not configured");
+    throw new Error(
+      "GOOGLE_SHEET_ID is not configured",
+    );
   }
 
   if (!Array.isArray(records)) {
-    throw new Error("Records must be an array");
+    throw new Error(
+      "Records must be an array",
+    );
   }
 
-  const escapedSheetName = escapeSheetName(sheetName);
+  const escapedSheetName =
+    escapeSheetName(sheetName);
 
-  if (records.length === 0) {
+  /*
+   * Get worksheet identity and grid dimensions.
+   */
+  const spreadsheetResponse =
     await executeWithRetry(() =>
-      sheets.spreadsheets.values.clear({
+      sheets.spreadsheets.get({
         spreadsheetId,
-        range: `${escapedSheetName}!A2:ZZ`,
+        fields:
+          "sheets(properties(sheetId,title,gridProperties))",
       }),
     );
 
-    clearSheetCache(sheetName);
-    return [];
+  const sheetInfo =
+    spreadsheetResponse.data.sheets?.find(
+      (sheet) =>
+        sheet.properties?.title === sheetName,
+    );
+
+  if (!sheetInfo) {
+    throw new Error(
+      `Worksheet "${sheetName}" not found`,
+    );
   }
 
-  const headers = Object.keys(records[0]);
+  const sheetId =
+    sheetInfo.properties.sheetId;
 
+  const gridProperties =
+    sheetInfo.properties.gridProperties || {};
+
+  /*
+   * Fetch current worksheet values.
+   * Do not use cached records for this step.
+   */
+  const existingResponse =
+    await executeWithRetry(() =>
+      sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `${escapedSheetName}!A1:ZZ`,
+      }),
+    );
+
+  const existingValues =
+    existingResponse.data.values || [];
+
+  /*
+   * Preserve column positions, including
+   * any empty columns between headers.
+   */
+  const headers = (
+    existingValues[0] || []
+  ).map(normalizeHeader);
+
+  const knownHeaders = new Set(
+    headers.filter(Boolean),
+  );
+
+  /*
+   * Append new headers discovered in
+   * any record.
+   */
+  for (const record of records) {
+    if (
+      !record ||
+      typeof record !== "object" ||
+      Array.isArray(record)
+    ) {
+      throw new Error(
+        "Each record must be an object",
+      );
+    }
+
+    for (const key of Object.keys(record)) {
+      const header = normalizeHeader(key);
+
+      if (
+        header &&
+        !knownHeaders.has(header)
+      ) {
+        headers.push(header);
+        knownHeaders.add(header);
+      }
+    }
+  }
+
+  if (!knownHeaders.size) {
+    throw new Error(
+      `No headers available for "${sheetName}"`,
+    );
+  }
+
+  /*
+   * Prevent duplicate column names.
+   */
+  if (
+    knownHeaders.size !==
+    headers.filter(Boolean).length
+  ) {
+    throw new Error(
+      "Duplicate worksheet headers detected",
+    );
+  }
+
+  /*
+   * Build complete table.
+   */
   const values = [
     headers,
     ...records.map((record) =>
-      headers.map((header) => record[header] ?? ""),
+      headers.map((header) =>
+        header
+          ? String(record[header] ?? "")
+          : "",
+      ),
     ),
   ];
 
-  await executeWithRetry(() =>
-    sheets.spreadsheets.values.clear({
-      spreadsheetId,
-      range: `${escapedSheetName}!A:ZZ`,
-    }),
+  const previousRowCount =
+    existingValues.length;
+
+  const newRowCount =
+    values.length;
+
+  const requiredRowCount = Math.max(
+    previousRowCount,
+    newRowCount,
+    1,
   );
 
-  await executeWithRetry(() =>
-    sheets.spreadsheets.values.update({
-      spreadsheetId,
-      range: `${escapedSheetName}!A1`,
-      valueInputOption: "RAW",
-      requestBody: {
-        values,
+  const previousColumnCount = Math.max(
+    0,
+    ...existingValues.map(
+      (row) => row.length,
+    ),
+  );
+
+  const requiredColumnCount = Math.max(
+    previousColumnCount,
+    headers.length,
+    1,
+  );
+
+  /*
+   * Convert values to Google Sheets
+   * CellData objects.
+   *
+   * Empty objects clear previous cell values
+   * when userEnteredValue is updated.
+   */
+  const toCell = (value) => {
+    const text = String(value ?? "");
+
+    return text === ""
+      ? {}
+      : {
+          userEnteredValue: {
+            stringValue: text,
+          },
+        };
+  };
+
+  const rowData = values.map((row) => ({
+    values: Array.from(
+      {
+        length: requiredColumnCount,
       },
-    }),
-  );
+      (_, index) =>
+        toCell(row[index] ?? ""),
+    ),
+  }));
 
-  clearSheetCache(sheetName);
+  /*
+   * Include blank rows to remove records
+   * that no longer exist.
+   */
+  while (
+    rowData.length < requiredRowCount
+  ) {
+    rowData.push({
+      values: Array.from(
+        {
+          length: requiredColumnCount,
+        },
+        () => ({}),
+      ),
+    });
+  }
+
+  const requests = [];
+
+  /*
+   * Expand worksheet if necessary.
+   */
+  const currentRows =
+    gridProperties.rowCount || 0;
+
+  const currentColumns =
+    gridProperties.columnCount || 0;
+
+  if (requiredRowCount > currentRows) {
+    requests.push({
+      appendDimension: {
+        sheetId,
+        dimension: "ROWS",
+        length:
+          requiredRowCount - currentRows,
+      },
+    });
+  }
+
+  if (
+    requiredColumnCount > currentColumns
+  ) {
+    requests.push({
+      appendDimension: {
+        sheetId,
+        dimension: "COLUMNS",
+        length:
+          requiredColumnCount - currentColumns,
+      },
+    });
+  }
+
+  /*
+   * Write all records and clear obsolete
+   * values in one batch request.
+   *
+   * Formatting is preserved because only
+   * userEnteredValue is modified.
+   */
+  requests.push({
+    updateCells: {
+      range: {
+        sheetId,
+        startRowIndex: 0,
+        endRowIndex:
+          requiredRowCount,
+        startColumnIndex: 0,
+        endColumnIndex:
+          requiredColumnCount,
+      },
+
+      rows: rowData,
+
+      fields: "userEnteredValue",
+    },
+  });
+
+  /*
+   * Submit as one batch.
+   */
+  try {
+    await executeWithRetry(() =>
+      sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+
+        requestBody: {
+          requests,
+        },
+      }),
+    );
+  } finally {
+    /*
+     * Invalidate even if the result is
+     * uncertain after network failure.
+     */
+    clearSheetCache(sheetName);
+  }
 
   return records;
 };

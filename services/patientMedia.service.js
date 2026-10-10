@@ -1,15 +1,22 @@
+
 import {
   deleteDriveFile,
   getDriveFileMetadata,
   getDriveFileStream,
-  uploadClinicalFile,
 } from "./googleDriveService.js";
 
+import {
+  uploadMulterFileToS3,
+  getS3FileStream,
+  deleteS3File,
+} from "./s3Service.js";
+
 import { getMediaFolder } from "../utils/patientMedia.js";
-import { writeSheet , readSheet } from "../utils/googleSheets.js";
 
-
-
+import {
+  writeSheet,
+  readSheet,
+} from "../utils/googleSheets.js";
 
 /* ========================================================
    CONFIG
@@ -17,13 +24,25 @@ import { writeSheet , readSheet } from "../utils/googleSheets.js";
 
 const SHEET_NAME = "Patient_Media";
 
+const STORAGE_PROVIDERS = Object.freeze({
+  S3: "s3",
+  DRIVE: "google_drive",
+});
+
+/*
+ * Physical deletion is disabled until explicitly enabled.
+ * Clinical records may have legal retention requirements.
+ */
+const ENABLE_PERMANENT_DELETE =
+  process.env.ENABLE_PATIENT_MEDIA_PERMANENT_DELETE ===
+  "true";
+
 /* ========================================================
    HELPERS
 ======================================================== */
 
 const normalize = (value) =>
-  String(value ?? "")
-    .trim();
+  String(value ?? "").trim();
 
 const normalizeLower = (value) =>
   normalize(value).toLowerCase();
@@ -31,11 +50,72 @@ const normalizeLower = (value) =>
 const isTrue = (value) => {
   const normalized = normalizeLower(value);
 
-  return (
-    normalized === "true" ||
-    normalized === "1" ||
-    normalized === "yes"
+  return [
+    "true",
+    "1",
+    "yes",
+  ].includes(normalized);
+};
+
+const isDeleted = (media) =>
+  isTrue(media?.is_deleted);
+
+const matchesId = (left, right) =>
+  normalizeLower(left) === normalizeLower(right);
+
+const getStorageProvider = (media) => {
+  const provider = normalizeLower(
+    media.storage_provider,
   );
+
+  if (provider === STORAGE_PROVIDERS.S3) {
+    return STORAGE_PROVIDERS.S3;
+  }
+
+  if (provider === STORAGE_PROVIDERS.DRIVE) {
+    return STORAGE_PROVIDERS.DRIVE;
+  }
+
+  /*
+   * Support legacy Google Drive records.
+   */
+  if (normalize(media.drive_file_id)) {
+    return STORAGE_PROVIDERS.DRIVE;
+  }
+
+  /*
+   * Support S3 records where provider is empty.
+   */
+  if (normalize(media.s3_key)) {
+    return STORAGE_PROVIDERS.S3;
+  }
+
+  throw new Error(
+    "Media storage provider could not be determined",
+  );
+};
+
+/* ========================================================
+   SERIALIZE LOCAL MEDIA MUTATIONS
+
+   Prevent overlapping read-modify-write operations
+   within this Node.js process.
+
+   IMPORTANT:
+   This does not coordinate multiple Render instances,
+   other backend services, or direct Sheet editors.
+======================================================== */
+
+let mutationQueue = Promise.resolve();
+
+const withMediaMutation = (operation) => {
+  const result = mutationQueue.then(operation);
+
+  mutationQueue = result.catch(() => {
+    // Keep the queue operational after a failure.
+  });
+
+  return result;
 };
 
 /* ========================================================
@@ -45,24 +125,22 @@ const isTrue = (value) => {
 const generateMediaId = (rows = []) => {
   let maxNumber = 0;
 
-  rows.forEach((row) => {
+  for (const row of rows) {
     const mediaId = normalize(row.media_id);
 
     const match = mediaId.match(/^MED_(\d+)$/i);
 
-    if (!match) {
-      return;
-    }
+    if (!match) continue;
 
     const number = Number(match[1]);
 
     if (
-      Number.isFinite(number) &&
+      Number.isSafeInteger(number) &&
       number > maxNumber
     ) {
       maxNumber = number;
     }
-  });
+  }
 
   return `MED_${String(maxNumber + 1).padStart(
     6,
@@ -76,7 +154,7 @@ const generateMediaId = (rows = []) => {
 
 const sanitizeFileName = (value) =>
   normalize(value)
-    .replace(/[^\w.\-]+/g, "_")
+    .replace(/[^\w.-]+/g, "_")
     .replace(/_+/g, "_");
 
 const getFileExtension = (fileName) => {
@@ -84,7 +162,7 @@ const getFileExtension = (fileName) => {
     /(\.[^./\\]+)$/,
   );
 
-  return match ? match[1] : "";
+  return match ? match[1].toLowerCase() : "";
 };
 
 const buildClinicalFileName = ({
@@ -120,19 +198,22 @@ const buildClinicalFileName = ({
 };
 
 /* ========================================================
-   GET ALL ROWS
+   READ ALL MEDIA
+
+   forceRefresh should be used before mutations.
 ======================================================== */
 
 export const getAllPatientMediaRecords =
-  async () => {
-    const rows =
-      (await readSheet(SHEET_NAME)) || [];
-
-    return rows;
+  async ({ forceRefresh = false } = {}) => {
+    return (
+      (await readSheet(SHEET_NAME, {
+        forceRefresh,
+      })) || []
+    );
   };
 
 /* ========================================================
-   GET ACTIVE ROWS
+   GET ACTIVE MEDIA
 ======================================================== */
 
 export const getActivePatientMediaRecords =
@@ -141,7 +222,7 @@ export const getActivePatientMediaRecords =
       await getAllPatientMediaRecords();
 
     return rows.filter(
-      (row) => !isTrue(row.is_deleted),
+      (row) => !isDeleted(row),
     );
   };
 
@@ -151,14 +232,16 @@ export const getActivePatientMediaRecords =
 
 export const getPatientMediaById =
   async (mediaId) => {
+    if (!normalize(mediaId)) {
+      return null;
+    }
+
     const rows =
       await getAllPatientMediaRecords();
 
     return (
-      rows.find(
-        (row) =>
-          normalizeLower(row.media_id) ===
-          normalizeLower(mediaId),
+      rows.find((row) =>
+        matchesId(row.media_id, mediaId)
       ) || null
     );
   };
@@ -173,19 +256,15 @@ export const getPatientMediaByPatientId =
       await getActivePatientMediaRecords();
 
     return rows
-      .filter(
-        (row) =>
-          normalizeLower(row.patient_id) ===
-          normalizeLower(patientId),
+      .filter((row) =>
+        matchesId(row.patient_id, patientId)
       )
       .sort((a, b) => {
-        const dateA = new Date(
-          a.uploaded_at || 0,
-        ).getTime();
+        const dateA =
+          new Date(a.uploaded_at || 0).getTime() || 0;
 
-        const dateB = new Date(
-          b.uploaded_at || 0,
-        ).getTime();
+        const dateB =
+          new Date(b.uploaded_at || 0).getTime() || 0;
 
         return dateB - dateA;
       });
@@ -200,10 +279,11 @@ export const getPatientMediaByAppointmentId =
     const rows =
       await getActivePatientMediaRecords();
 
-    return rows.filter(
-      (row) =>
-        normalizeLower(row.appointment_id) ===
-        normalizeLower(appointmentId),
+    return rows.filter((row) =>
+      matchesId(
+        row.appointment_id,
+        appointmentId,
+      )
     );
   };
 
@@ -216,15 +296,19 @@ export const getPatientMediaByTreatmentId =
     const rows =
       await getActivePatientMediaRecords();
 
-    return rows.filter(
-      (row) =>
-        normalizeLower(row.treatment_id) ===
-        normalizeLower(treatmentId),
+    return rows.filter((row) =>
+      matchesId(
+        row.treatment_id,
+        treatmentId,
+      )
     );
   };
 
 /* ========================================================
-   UPLOAD MEDIA
+   CREATE PATIENT MEDIA RECORDS
+
+   New uploads -> Amazon S3
+   Metadata    -> Google Sheets
 ======================================================== */
 
 export const createPatientMediaRecords =
@@ -239,186 +323,244 @@ export const createPatientMediaRecords =
     description = "",
     uploadedBy = "",
   }) => {
-    if (
-      !Array.isArray(files) ||
-      files.length === 0
-    ) {
-      throw new Error(
-        "At least one file is required",
-      );
-    }
+    return withMediaMutation(async () => {
+      if (
+        !Array.isArray(files) ||
+        files.length === 0 ||
+        files.length > 10
+      ) {
+        throw new Error(
+          "Between 1 and 10 files are required",
+        );
+      }
 
-    if (!normalize(patientId)) {
-      throw new Error(
-        "Patient ID is required",
-      );
-    }
+      if (!normalize(patientId)) {
+        throw new Error(
+          "Patient ID is required",
+        );
+      }
 
-    if (!normalize(mediaType)) {
-      throw new Error(
-        "Media type is required",
-      );
-    }
+      if (!normalize(mediaType)) {
+        throw new Error(
+          "Media type is required",
+        );
+      }
 
-    const rows =
-      await getAllPatientMediaRecords();
-
-    const newRecords = [];
-
-    let nextRows = [...rows];
-
-    for (const file of files) {
-      const mediaId =
-        generateMediaId(nextRows);
-
-      const fileName =
-        buildClinicalFileName({
-          mediaId,
-          patientId,
-          mediaType,
-          category,
-          toothNumber,
-          originalName: file.originalname,
+      /*
+       * Always fetch fresh rows before generating IDs.
+       */
+      const rows =
+        await getAllPatientMediaRecords({
+          forceRefresh: true,
         });
 
-      const categoryFolder =
-        getMediaFolder(mediaType);
+      const nextRows = [...rows];
+      const newRecords = [];
+      const uploadedKeys = [];
 
-      let uploadedDriveFile = null;
+      let sheetWriteStarted = false;
 
       try {
-        uploadedDriveFile =
-          await uploadClinicalFile({
-            buffer: file.buffer,
+        for (const file of files) {
+          const mediaId =
+            generateMediaId(nextRows);
 
-            fileName,
+          const fileName =
+            buildClinicalFileName({
+              mediaId,
+              patientId,
+              mediaType,
+              category,
+              toothNumber,
+              originalName: file.originalname,
+            });
 
-            mimeType: file.mimetype,
+          const categoryFolder =
+            getMediaFolder(mediaType);
 
-            patientId,
+          const uploaded =
+            await uploadMulterFileToS3({
+              file,
+              fileName,
+              patientId,
+              categoryFolder,
+            });
 
-            categoryFolder,
-          });
+          uploadedKeys.push(uploaded.key);
 
-        const record = {
-          media_id: mediaId,
+          const record = {
+            media_id: mediaId,
 
-          patient_id:
-            normalize(patientId),
+            patient_id:
+              normalize(patientId),
 
-          appointment_id:
-            normalize(appointmentId),
+            appointment_id:
+              normalize(appointmentId),
 
-          treatment_id:
-            normalize(treatmentId),
+            treatment_id:
+              normalize(treatmentId),
 
-          media_type:
-            normalize(mediaType),
+            media_type:
+              normalize(mediaType),
 
-          category:
-            normalize(category),
+            category:
+              normalize(category),
 
-          tooth_number:
-            normalize(toothNumber),
+            tooth_number:
+              normalize(toothNumber),
 
-          description:
-            normalize(description),
+            description:
+              normalize(description),
 
-          drive_file_id:
-            normalize(
-              uploadedDriveFile.id,
-            ),
+            // Legacy Google Drive fields
+            drive_file_id: "",
+            drive_folder_id: "",
 
-          drive_folder_id:
-            normalize(
-              uploadedDriveFile.folderId,
-            ),
+            // File metadata
+            file_name:
+              normalize(uploaded.name),
 
-          file_name:
-            normalize(
-              uploadedDriveFile.name ||
-                fileName,
-            ),
+            mime_type:
+              normalize(uploaded.mimeType),
 
-          mime_type:
-            normalize(
-              uploadedDriveFile.mimeType ||
-                file.mimetype,
-            ),
+            file_size:
+              normalize(uploaded.size),
 
-          file_size:
-            normalize(
-              uploadedDriveFile.size ||
-                file.size ||
-                "",
-            ),
+            uploaded_by:
+              normalize(uploadedBy),
 
-          uploaded_by:
-            normalize(uploadedBy),
+            uploaded_at:
+              new Date().toISOString(),
 
-          uploaded_at:
-            new Date().toISOString(),
+            is_deleted: "FALSE",
 
-          is_deleted: "FALSE",
-        };
+            // Amazon S3 fields
+            storage_provider:
+              STORAGE_PROVIDERS.S3,
 
-        nextRows.push(record);
+            s3_bucket:
+              normalize(uploaded.bucket),
 
-        newRecords.push(record);
-      } catch (error) {
+            s3_key:
+              normalize(uploaded.key),
+
+            deleted_at: "",
+          };
+
+          nextRows.push(record);
+          newRecords.push(record);
+        }
+
         /*
-         * If Drive upload succeeded but later something
-         * fails before writing to Sheet, try to remove
-         * the orphan Drive file.
+         * Write metadata after all uploads succeed.
          */
-        if (uploadedDriveFile?.id) {
-          try {
-            await deleteDriveFile(
-              uploadedDriveFile.id,
-            );
-          } catch (cleanupError) {
-            console.error(
-              "Failed to clean orphan Drive file:",
-              cleanupError,
-            );
+        sheetWriteStarted = true;
+
+        await writeSheet(
+          SHEET_NAME,
+          nextRows,
+        );
+
+        return newRecords;
+      } catch (error) {
+        console.error(
+          "Patient media upload failed:",
+          error,
+        );
+
+        /*
+         * Cleanup only if writing to Sheets
+         * has not started.
+         *
+         * Once a sheet write starts, its result
+         * may be uncertain, even if it throws.
+         */
+        if (!sheetWriteStarted) {
+          for (const key of uploadedKeys) {
+            try {
+              await deleteS3File(key);
+            } catch (cleanupError) {
+              console.error(
+                "Failed to clean S3 object:",
+                key,
+                cleanupError,
+              );
+            }
           }
+        } else {
+          console.error(
+            "Media upload reconciliation required. " +
+            "Inspect Google Sheets and S3 for:",
+            uploadedKeys,
+          );
         }
 
         throw error;
       }
-    }
-
-    await writeSheet(
-      SHEET_NAME,
-      nextRows,
-    );
-
-    return newRecords;
+    });
   };
 
 /* ========================================================
    GET FILE STREAM
+
+   New files    -> AWS S3
+   Legacy files -> Google Drive
 ======================================================== */
 
 export const getPatientMediaFileStream =
   async (mediaId) => {
-    const media =
-      await getPatientMediaById(mediaId);
-
-    if (
-      !media ||
-      isTrue(media.is_deleted)
-    ) {
+    if (!normalize(mediaId)) {
       return null;
     }
 
-    const fileId = normalize(
-      media.drive_file_id,
-    );
+    const media =
+      await getPatientMediaById(mediaId);
+
+    if (!media || isDeleted(media)) {
+      return null;
+    }
+
+    const provider =
+      getStorageProvider(media);
+
+    /* ---------------- AWS S3 ---------------- */
+
+    if (provider === STORAGE_PROVIDERS.S3) {
+      const key =
+        normalize(media.s3_key);
+
+      if (!key) {
+        throw new Error(
+          "S3 object key is missing",
+        );
+      }
+
+      const result =
+        await getS3FileStream(key);
+
+      return {
+        media,
+
+        metadata: {
+          ...result.metadata,
+
+          name:
+            media.file_name ||
+            result.metadata.name,
+        },
+
+        stream: result.stream,
+      };
+    }
+
+    /* ---------------- GOOGLE DRIVE ---------------- */
+
+    const fileId =
+      normalize(media.drive_file_id);
 
     if (!fileId) {
       throw new Error(
-        "Drive file ID is missing",
+        "Google Drive file ID is missing",
       );
     }
 
@@ -430,84 +572,193 @@ export const getPatientMediaFileStream =
 
     return {
       media,
-
       metadata,
-
       stream,
     };
   };
 
 /* ========================================================
    SOFT DELETE
+
+   Only update metadata.
+   The physical file remains in storage.
 ======================================================== */
 
 export const softDeletePatientMedia =
   async (mediaId) => {
-    const rows =
-      await getAllPatientMediaRecords();
+    return withMediaMutation(async () => {
+      if (!normalize(mediaId)) {
+        return null;
+      }
 
-    const index = rows.findIndex(
-      (row) =>
-        normalizeLower(row.media_id) ===
-        normalizeLower(mediaId),
-    );
+      const rows =
+        await getAllPatientMediaRecords({
+          forceRefresh: true,
+        });
 
-    if (index === -1) {
-      return null;
-    }
+      const index = rows.findIndex(
+        (row) =>
+          matchesId(row.media_id, mediaId),
+      );
 
-    rows[index] = {
-      ...rows[index],
+      if (index === -1) {
+        return null;
+      }
 
-      is_deleted: "TRUE",
-    };
+      if (isDeleted(rows[index])) {
+        return rows[index];
+      }
 
-    await writeSheet(
-      SHEET_NAME,
-      rows,
-    );
+      rows[index] = {
+        ...rows[index],
 
-    return rows[index];
+        is_deleted: "TRUE",
+
+        deleted_at:
+          new Date().toISOString(),
+      };
+
+      await writeSheet(
+        SHEET_NAME,
+        rows,
+      );
+
+      return rows[index];
+    });
   };
 
 /* ========================================================
-   HARD DELETE DRIVE FILE
+   PHYSICAL DELETE HELPER
+
+   Called only after a record has been
+   marked as deleted in Google Sheets.
+======================================================== */
+
+const deleteStoredMediaFile = async (media) => {
+  const provider =
+    getStorageProvider(media);
+
+  if (provider === STORAGE_PROVIDERS.S3) {
+    const key =
+      normalize(media.s3_key);
+
+    if (!key) {
+      throw new Error(
+        "Cannot delete media: S3 key missing",
+      );
+    }
+
+    await deleteS3File(key);
+
+    return;
+  }
+
+  const driveFileId =
+    normalize(media.drive_file_id);
+
+  if (!driveFileId) {
+    throw new Error(
+      "Cannot delete media: Drive file ID missing",
+    );
+  }
+
+  await deleteDriveFile(driveFileId);
+};
+
+/* ========================================================
+   PERMANENT DELETE
+
+   1. Mark record soft-deleted
+   2. Remove current stored object
+   3. Remove metadata row
+
+   If storage deletion fails, the soft-deleted
+   record remains for reconciliation.
+
+   WARNING:
+   S3 versioned objects can retain older versions.
 ======================================================== */
 
 export const permanentlyDeletePatientMedia =
   async (mediaId) => {
-    const rows =
-      await getAllPatientMediaRecords();
-
-    const index = rows.findIndex(
-      (row) =>
-        normalizeLower(row.media_id) ===
-        normalizeLower(mediaId),
-    );
-
-    if (index === -1) {
-      return null;
-    }
-
-    const media = rows[index];
-
-    const driveFileId =
-      normalize(
-        media.drive_file_id,
+    if (!ENABLE_PERMANENT_DELETE) {
+      const error = new Error(
+        "Permanent media deletion is disabled",
       );
 
-    if (driveFileId) {
-      await deleteDriveFile(
-        driveFileId,
-      );
+      error.status = 403;
+
+      throw error;
     }
 
-    rows.splice(index, 1);
+    return withMediaMutation(async () => {
+      if (!normalize(mediaId)) {
+        return null;
+      }
 
-    await writeSheet(
-      SHEET_NAME,
-      rows,
-    );
+      const rows =
+        await getAllPatientMediaRecords({
+          forceRefresh: true,
+        });
 
-    return media;
+      const index = rows.findIndex(
+        (row) =>
+          matchesId(row.media_id, mediaId),
+      );
+
+      if (index === -1) {
+        return null;
+      }
+
+      let media = rows[index];
+
+      /*
+       * First make the record inactive.
+       */
+      if (!isDeleted(media)) {
+        media = {
+          ...media,
+
+          is_deleted: "TRUE",
+
+          deleted_at:
+            new Date().toISOString(),
+        };
+
+        rows[index] = media;
+
+        await writeSheet(
+          SHEET_NAME,
+          rows,
+        );
+      }
+
+      /*
+       * Remove the current stored object.
+       *
+       * With S3 versioning, older versions
+       * may still exist.
+       */
+      await deleteStoredMediaFile(media);
+
+      /*
+       * Remove the metadata row only after
+       * the storage operation succeeds.
+       */
+      const remainingRows =
+        rows.filter(
+          (row) =>
+            !matchesId(
+              row.media_id,
+              mediaId,
+            ),
+        );
+
+      await writeSheet(
+        SHEET_NAME,
+        remainingRows,
+      );
+
+      return media;
+    });
   };

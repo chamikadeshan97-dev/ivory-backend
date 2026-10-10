@@ -227,3 +227,87 @@ export const deleteOrthoPaymentService =
 
     return deleted;
   };
+
+  /* ========================================================
+   PERMANENTLY DELETE ALL PAYMENTS BY ORTHO CASE
+======================================================== */
+
+export const deleteOrthoPaymentsByCaseService = async (caseId) => {
+  /* ----------------------------------------------------
+     VALIDATE CASE ID
+  ---------------------------------------------------- */
+
+  const normalizedCaseId = normalize(caseId);
+
+  if (!normalizedCaseId) {
+    throw new Error("Ortho case ID is required");
+  }
+
+  /* ----------------------------------------------------
+     READ ALL PAYMENTS
+  ---------------------------------------------------- */
+
+  const payments = (await readSheet(PAYMENTS_SHEET)) || [];
+
+  /* ----------------------------------------------------
+     FIND RELATED PAYMENTS
+  ---------------------------------------------------- */
+
+  const relatedPayments = payments.filter(
+    (row) =>
+      normalize(row.ortho_case_id) === normalizedCaseId
+  );
+
+  /* ----------------------------------------------------
+     NO PAYMENTS FOUND
+  ---------------------------------------------------- */
+
+  if (relatedPayments.length === 0) {
+    return {
+      case_id: caseId,
+      deleted_count: 0,
+      deleted_payment_ids: [],
+      deleted_total_amount: 0,
+    };
+  }
+
+  /* ----------------------------------------------------
+     CALCULATE DELETED AMOUNT
+  ---------------------------------------------------- */
+
+  const deletedTotalAmount = relatedPayments.reduce(
+    (sum, row) => sum + toNumber(row.amount),
+    0
+  );
+
+  /* ----------------------------------------------------
+     REMOVE RELATED PAYMENTS
+  ---------------------------------------------------- */
+
+  const remainingPayments = payments.filter(
+    (row) =>
+      normalize(row.ortho_case_id) !== normalizedCaseId
+  );
+
+  /* ----------------------------------------------------
+     UPDATE GOOGLE SHEET
+  ---------------------------------------------------- */
+
+  await writeSheet(PAYMENTS_SHEET, remainingPayments);
+
+  /* ----------------------------------------------------
+     RETURN RESULT
+  ---------------------------------------------------- */
+
+  return {
+    case_id: caseId,
+
+    deleted_count: relatedPayments.length,
+
+    deleted_payment_ids: relatedPayments.map(
+      (row) => row.ortho_payment_id
+    ),
+
+    deleted_total_amount: deletedTotalAmount,
+  };
+};

@@ -396,7 +396,7 @@ export const viewPatientMedia =
         "error",
         (error) => {
           console.error(
-            "Drive stream error:",
+  "Patient media stream error:",
             error,
           );
 

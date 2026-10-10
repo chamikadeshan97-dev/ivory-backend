@@ -18,7 +18,7 @@ import {
   /* =====================================================
      VISITS
   ===================================================== */
-
+  deleteOrthoCasePermanently,
   createOrthoVisit,
   getOrthoVisitsByCase,
   getOrthoVisitById,
@@ -28,7 +28,6 @@ import {
   /* =====================================================
      PAYMENTS
   ===================================================== */
-
   createOrthoPayment,
   getOrthoPaymentsByCase,
   getOrthoPaymentById,
@@ -38,7 +37,6 @@ import {
   /* =====================================================
      MEDIA
   ===================================================== */
-
   uploadOrthoMedia,
   getOrthoMediaByCase,
   getOrthoMediaById,
@@ -53,98 +51,61 @@ const router = express.Router();
    ORTHO CASES
 ======================================================== */
 
-router.post(
-  "/cases",
-  createOrthoCase,
-);
+router.post("/cases", createOrthoCase);
 
-router.get(
-  "/cases",
-  getAllOrthoCases,
-);
+router.get("/cases", getAllOrthoCases);
 
-router.get(
-  "/patient/:patientId",
-  getOrthoCasesByPatient,
-);
+router.get("/patient/:patientId", getOrthoCasesByPatient);
 
-router.get(
-  "/cases/:caseId/summary",
-  getOrthoCaseSummary,
-);
+router.get("/cases/:caseId/summary", getOrthoCaseSummary);
 
-router.get(
-  "/cases/:caseId",
-  getOrthoCaseById,
-);
+router.get("/cases/:caseId", getOrthoCaseById);
 
-router.patch(
-  "/cases/:caseId",
-  updateOrthoCase,
-);
+router.patch("/cases/:caseId", updateOrthoCase);
 
-router.patch(
-  "/cases/:caseId/status",
-  updateOrthoCaseStatus,
-);
+router.patch("/cases/:caseId/status", updateOrthoCaseStatus);
 
 /* ========================================================
    ORTHO VISITS
 ======================================================== */
 
-router.post(
-  "/cases/:caseId/visits",
-  createOrthoVisit,
-);
+router.post("/cases/:caseId/visits", createOrthoVisit);
 
-router.get(
-  "/cases/:caseId/visits",
-  getOrthoVisitsByCase,
-);
+router.get("/cases/:caseId/visits", getOrthoVisitsByCase);
 
-router.get(
-  "/visits/:visitId",
-  getOrthoVisitById,
-);
+router.get("/visits/:visitId", getOrthoVisitById);
 
-router.patch(
-  "/visits/:visitId",
-  updateOrthoVisit,
-);
+router.patch("/visits/:visitId", updateOrthoVisit);
+
+router.delete("/visits/:visitId", deleteOrthoVisit);
+/* ========================================================
+   PERMANENTLY DELETE ORTHO CASE
+======================================================== */
+
+/* ========================================================
+   DELETE COMPLETE ORTHO CASE
+======================================================== */
 
 router.delete(
-  "/visits/:visitId",
-  deleteOrthoVisit,
+  "/cases/:caseId/permanent",
+  // requireAuthentication,
+  // requireAdminPermission,
+  deleteOrthoCasePermanently,
 );
 
 /* ========================================================
    ORTHO PAYMENTS
 ======================================================== */
 
-router.post(
-  "/cases/:caseId/payments",
-  createOrthoPayment,
-);
+router.post("/cases/:caseId/payments", createOrthoPayment);
 
-router.get(
-  "/cases/:caseId/payments",
-  getOrthoPaymentsByCase,
-);
+router.get("/cases/:caseId/payments", getOrthoPaymentsByCase);
 
-router.get(
-  "/payments/:paymentId",
-  getOrthoPaymentById,
-);
+router.get("/payments/:paymentId", getOrthoPaymentById);
 
-router.patch(
-  "/payments/:paymentId",
-  updateOrthoPayment,
-);
+router.patch("/payments/:paymentId", updateOrthoPayment);
 
-router.delete(
-  "/payments/:paymentId",
-  deleteOrthoPayment,
-);
+router.delete("/payments/:paymentId", deleteOrthoPayment);
 
 /* ========================================================
    ORTHO MEDIA
@@ -161,10 +122,7 @@ router.delete(
 
 router.post(
   "/cases/:caseId/media",
-  mediaUpload.array(
-    "files",
-    10,
-  ),
+  mediaUpload.array("files", 10),
   uploadOrthoMedia,
 );
 
@@ -178,37 +136,25 @@ router.post(
  * ?visit_id=ORV_000001
  */
 
-router.get(
-  "/cases/:caseId/media",
-  getOrthoMediaByCase,
-);
+router.get("/cases/:caseId/media", getOrthoMediaByCase);
 
 /*
  * Stream actual Google Drive file.
  */
 
-router.get(
-  "/media/:mediaId/view",
-  viewOrthoMediaFile,
-);
+router.get("/media/:mediaId/view", viewOrthoMediaFile);
 
 /*
  * Get media metadata.
  */
 
-router.get(
-  "/media/:mediaId",
-  getOrthoMediaById,
-);
+router.get("/media/:mediaId", getOrthoMediaById);
 
 /*
  * Soft delete.
  */
 
-router.delete(
-  "/media/:mediaId",
-  deleteOrthoMedia,
-);
+router.delete("/media/:mediaId", deleteOrthoMedia);
 
 /*
  * Permanent delete:
@@ -218,10 +164,7 @@ router.delete(
  * removes Google Sheet row
  */
 
-router.delete(
-  "/media/:mediaId/permanent",
-  permanentlyDeleteOrthoMedia,
-);
+router.delete("/media/:mediaId/permanent", permanentlyDeleteOrthoMedia);
 
 /* ========================================================
    EXPORT
