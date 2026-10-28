@@ -1,6 +1,9 @@
 import { readSheet, writeSheet } from "../utils/googleSheets.js";
 
 const SHEET = "Ortho_Cases";
+const PATIENTS_SHEET = "Patients";
+const ORTHO_PAYMENTS_SHEET = "Ortho_Payments";
+const protectedFields = ["ortho_case_id", "patient_id", "created_at"];
 
 const clean = (value) => String(value ?? "").trim();
 
@@ -37,9 +40,6 @@ const generateNextId = (rows, fieldName, prefix) => {
 
 export const createOrthoCaseService = async (payload) => {
   const cases = (await readSheet(SHEET)) || [];
-
-
-  
 
   const record = {
     ortho_case_id: generateNextId(cases, "ortho_case_id", "ORT"),
@@ -82,28 +82,158 @@ export const createOrthoCaseService = async (payload) => {
   return record;
 };
 
+/* ========================================================
+   GET ALL ORTHO CASES WITH PATIENT DETAILS
+======================================================== */
+
+/* ========================================================
+   SHEET CONFIGURATION
+======================================================== */
+
+/* ========================================================
+   PAYMENT HELPERS
+======================================================== */
+
+const getPaymentAmount = (payment) => {
+  return toNumber(
+    payment.payment_amount ?? payment.amount ?? payment.paid_amount ?? 0,
+  );
+};
+
+/* ========================================================
+   GET ALL ORTHO CASES WITH PATIENTS AND PAYMENTS
+======================================================== */
+
 export const getAllOrthoCasesService = async (filters = {}) => {
-  let cases = (await readSheet(SHEET)) || [];
+  /* ======================================================
+     LOAD ALL THREE SHEETS
+  ====================================================== */
+
+  const [caseData, patientData, paymentData] = await Promise.all([
+    readSheet(SHEET),
+    readSheet(PATIENTS_SHEET),
+    readSheet(ORTHO_PAYMENTS_SHEET),
+  ]);
+
+  let cases = Array.isArray(caseData) ? caseData : [];
+
+  const patients = Array.isArray(patientData) ? patientData : [];
+
+  const payments = Array.isArray(paymentData) ? paymentData : [];
+
+  /* ======================================================
+     CREATE PATIENT LOOKUP
+  ====================================================== */
+
+  const patientMap = new Map();
+
+  patients.forEach((patient) => {
+    const patientId = normalize(patient.patient_id || patient.id);
+
+    if (patientId) {
+      patientMap.set(patientId, patient);
+    }
+  });
+
+  /* ======================================================
+     CALCULATE TOTAL PAID FOR EACH ORTHO CASE
+  ====================================================== */
+
+  const paymentsMap = new Map();
+
+  payments.forEach((payment) => {
+    const caseId = normalize(payment.ortho_case_id);
+
+    if (!caseId) {
+      return;
+    }
+
+    const amount = getPaymentAmount(payment);
+
+    const previousTotal = paymentsMap.get(caseId) || 0;
+
+    paymentsMap.set(caseId, previousTotal + amount);
+  });
+
+  /* ======================================================
+     COMBINE CASE + PATIENT + PAYMENT DATA
+  ====================================================== */
+
+  cases = cases.map((item) => {
+    const caseId = normalize(item.ortho_case_id);
+
+    const patientId = normalize(item.patient_id);
+
+    const patient = patientMap.get(patientId);
+
+    const totalFee = toNumber(item.total_treatment_fee);
+
+    const totalPaid = paymentsMap.get(caseId) || 0;
+
+    const balance = Math.max(totalFee - totalPaid, 0);
+
+    return {
+      ...item,
+
+      patient_name: patient ? clean(patient.name || patient.patient_name) : "",
+
+      patient_mobile: patient
+        ? clean(patient.phone || patient.mobile || patient.mobile_number)
+        : "",
+
+      total_treatment_fee: totalFee,
+
+      total_paid: totalPaid,
+
+      balance: balance,
+    };
+  });
+
+  /* ======================================================
+     STATUS FILTER
+  ====================================================== */
 
   if (clean(filters.status)) {
     cases = cases.filter(
-      (row) => normalize(row.status) === normalize(filters.status),
+      (item) => normalize(item.status) === normalize(filters.status),
     );
   }
 
+  /* ======================================================
+     DENTIST FILTER
+  ====================================================== */
+
   if (clean(filters.dentist_id)) {
     cases = cases.filter(
-      (row) => normalize(row.dentist_id) === normalize(filters.dentist_id),
+      (item) => normalize(item.dentist_id) === normalize(filters.dentist_id),
     );
   }
+
+  /* ======================================================
+     SEARCH FILTER
+  ====================================================== */
 
   if (clean(filters.search)) {
     const keyword = normalize(filters.search);
 
-    cases = cases.filter((row) =>
-      Object.values(row).some((value) => normalize(value).includes(keyword)),
+    cases = cases.filter((item) =>
+      Object.values(item).some((value) => normalize(value).includes(keyword)),
     );
   }
+
+  /* ======================================================
+     SORT BY LATEST UPDATED
+  ====================================================== */
+
+  cases.sort((a, b) => {
+    const dateA = Date.parse(a.updated_at);
+    const dateB = Date.parse(b.updated_at);
+
+    const timeA = Number.isFinite(dateA) ? dateA : 0;
+    const timeB = Number.isFinite(dateB) ? dateB : 0;
+
+    return timeB - timeA;
+  });
 
   return cases;
 };
@@ -208,8 +338,7 @@ export const deleteOrthoCaseRecordService = async (caseId) => {
   ---------------------------------------------------- */
 
   const caseIndex = cases.findIndex(
-    (row) =>
-      normalize(row.ortho_case_id) === normalizedCaseId,
+    (row) => normalize(row.ortho_case_id) === normalizedCaseId,
   );
 
   if (caseIndex === -1) {
@@ -227,8 +356,7 @@ export const deleteOrthoCaseRecordService = async (caseId) => {
   ---------------------------------------------------- */
 
   const updatedCases = cases.filter(
-    (row) =>
-      normalize(row.ortho_case_id) !== normalizedCaseId,
+    (row) => normalize(row.ortho_case_id) !== normalizedCaseId,
   );
 
   /* ----------------------------------------------------
